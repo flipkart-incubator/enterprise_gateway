@@ -40,6 +40,8 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
         self.yarn_endpoint_security_enabled \
             = proxy_config.get('yarn_endpoint_security_enabled',
                                kernel_manager.parent.parent.yarn_endpoint_security_enabled)
+        # #TODO remove this
+        # self.yarn_endpoint = "http://10.32.77.243:8088"
         yarn_url = urlparse(self.yarn_endpoint)
         yarn_master = yarn_url.hostname
         yarn_port = yarn_url.port
@@ -59,22 +61,85 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
             self.log.debug("{class_name} shutdown wait time adjusted to {wait_time} seconds.".
                            format(class_name=type(self).__name__, wait_time=kernel_manager.shutdown_wait_time))
 
-    def launch_process(self, kernel_cmd, **kw):
-        """ Launches the Yarn process.  Prior to invocation, connection files will be distributed to each applicable
-            Yarn node so that its in place when the kernel is started.
-        """
-        super(YarnClusterProcessProxy, self).launch_process(kernel_cmd, **kw)
+        self.yarn_resource_check_wait_time = 0.20 * self.kernel_launch_timeout
+
+    def launch_process(self, kernel_cmd, **kwargs):
+        env_dict = kwargs.get('env')
+
+        # checks to see if the queue resource is available
+        # if not kernel startup is not tried
+        self.confirm_yarn_queue_avaibility(env_dict)
+        # Launches the specified process within a YARN cluster environment.
+        super(YarnClusterProcessProxy, self).launch_process(kernel_cmd, **kwargs)
 
         # launch the local run.sh - which is configured for yarn-cluster...
-        self.local_proc = launch_kernel(kernel_cmd, **kw)
+        self.local_proc = launch_kernel(kernel_cmd, **kwargs)
         self.pid = self.local_proc.pid
         self.ip = local_ip
 
         self.log.debug("Yarn cluster kernel launched using YARN endpoint: {}, pid: {}, Kernel ID: {}, cmd: '{}'"
                        .format(self.yarn_endpoint, self.local_proc.pid, self.kernel_id, kernel_cmd))
-        self.confirm_remote_startup(kernel_cmd, **kw)
+        self.confirm_remote_startup(kernel_cmd, **kwargs)
 
         return self
+
+    """submitting jobs to yarn queue and then checking till the jobs are in running state 
+       will lead to orphan jobs being created in some scenarios.
+       We take kernel_launch_timeout time and divide this into two parts.
+       if the queue is unavailable we take max 20% of the time to poll the queue periodically
+       and if the queue becomes available the rest of timeout is met in 80% of the remmaining 
+       time.  
+
+    """
+
+    def confirm_yarn_queue_avaibility(self, env_dict):
+        """
+        confirms if the yarn queue has capacity to handle the resource requests that
+        will be sent to it.
+        if not, proper error messages are sent back for user experience
+        :param env_dict:
+        :return:
+        """
+
+        executer_memory = int(env_dict['EXECUTOR_MEMORY'])
+        driver_memory = int(env_dict['DRIVER_MEMORY'])
+
+        candidate_queue_name = env_dict['QUEUE']
+
+        node_label = env_dict['NODE_LABEL']
+
+        self.container_memory = self.resource_mgr.cluster_node_container_memory()
+        self.candidate_queue = self.resource_mgr.cluster_scheduler_queue(candidate_queue_name)
+        self.candidate_partition = self.resource_mgr.cluster_queue_partition(self.candidate_queue, node_label)
+
+
+        if max(executer_memory, driver_memory) > self.container_memory:
+            self.log_and_raise(http_status_code=500,
+                               reason="Container Memory not sufficient for a executor/driver allocation")
+
+        # else the resources may or may not be available now. it may be possible that if we wait then the resources
+        # become available. start  a timeout process
+
+        self.start_time = RemoteProcessProxy.get_current_time()
+        yarn_available = False
+
+        while not yarn_available:
+            self.handle_yarn_queue_timeout()
+            yarn_available = self.resource_mgr.cluster_scheduler_queue_availability(self.candidate_partition)
+
+    def handle_yarn_queue_timeout(self):
+
+        # each time we sleep we substract equal amount of time for the kernel launch timeout
+        self.log.info("Kernel Launch Timeout - {}".format(self.kernel_launch_timeout))
+        time.sleep(poll_interval)
+        self.kernel_launch_timeout -= poll_interval
+
+        time_interval = RemoteProcessProxy.get_time_diff(self.start_time, RemoteProcessProxy.get_current_time())
+
+        if time_interval > self.yarn_resource_check_wait_time:
+            error_http_code = 500
+            reason = "Yarn Compute Resource is unavailable"
+            self.log_and_raise(http_status_code=error_http_code, reason=reason)
 
     def poll(self):
         """Submitting a new kernel/app to YARN will take a while to be ACCEPTED.
