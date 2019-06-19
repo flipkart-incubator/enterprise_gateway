@@ -64,11 +64,9 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
         self.yarn_resource_check_wait_time = 0.20 * self.kernel_launch_timeout
 
     def launch_process(self, kernel_cmd, **kwargs):
-        env_dict = kwargs.get('env')
-
         # checks to see if the queue resource is available
         # if not kernel startup is not tried
-        self.confirm_yarn_queue_avaibility(env_dict)
+        self.confirm_yarn_queue_avaibility(**kwargs)
         # Launches the specified process within a YARN cluster environment.
         super(YarnClusterProcessProxy, self).launch_process(kernel_cmd, **kwargs)
 
@@ -92,7 +90,7 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
 
     """
 
-    def confirm_yarn_queue_avaibility(self, env_dict):
+    def confirm_yarn_queue_avaibility(self, **kwargs):
         """
         confirms if the yarn queue has capacity to handle the resource requests that
         will be sent to it.
@@ -101,12 +99,12 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
         :return:
         """
 
-        executer_memory = int(env_dict['EXECUTOR_MEMORY'])
-        driver_memory = int(env_dict['DRIVER_MEMORY'])
+        executer_memory = int(kwargs['env']['KERNEL_EXECUTOR_MEMORY'])
+        driver_memory = int(kwargs['env']['KERNEL_DRIVER_MEMORY'])
 
-        candidate_queue_name = env_dict['QUEUE']
+        candidate_queue_name = str(kwargs['env']['KERNEL_QUEUE'])
 
-        node_label = env_dict['NODE_LABEL']
+        node_label = str(kwargs['env']['KERNEL_NODE_LABEL'])
 
         self.container_memory = self.resource_mgr.cluster_node_container_memory()
         self.candidate_queue = self.resource_mgr.cluster_scheduler_queue(candidate_queue_name)
