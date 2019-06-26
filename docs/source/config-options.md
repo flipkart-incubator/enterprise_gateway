@@ -203,7 +203,7 @@ EnterpriseGatewayApp options
     Default: -1
     Specifies the maximum number of kernels a user can have active
     simultaneously.  A value of -1 disables enforcement.
-    (EG_MAX_KERNELS_PER_USER env var)
+    (EG_MAX_KERNELS_PER_USER env var)   
 --EnterpriseGatewayApp.port=<Int>
     Default: 8888
     Port on which to listen (KG_PORT env var)
@@ -249,6 +249,11 @@ EnterpriseGatewayApp options
     Default: False
     Is YARN Kerberos/SPNEGO Security enabled (True/False).
     (EG_YARN_ENDPOINT_SECURITY_ENABLED env var)
+--EnterpriseGatewayApp.zmq_port_ping_interval=<Int>
+    Default: 3000
+    Specifies the value of ws_ping_interval that is being used for websocket
+    ping pong mechanism in ZMQ Port Handler from notebook server.
+    (NOTEBOOK_ZMQ_PORT_PING_INTERVAL env var) 
 
 NotebookHTTPPersonality options
 -------------------------------
