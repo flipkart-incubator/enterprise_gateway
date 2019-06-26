@@ -157,7 +157,7 @@ class EnterpriseGatewayApp(KernelGatewayApp):
         return int(os.getenv(self.max_kernels_per_user_env, self.max_kernels_per_user_default_value))
 
 
-    zmq_port_ping_interval = 'NOTEBOOK_ZMQ_PORT_PING_INTERVAL'
+    zmq_port_ping_interval_env = 'NOTEBOOK_ZMQ_PORT_PING_INTERVAL'
     zmq_port_ping_interval_default_value = 30000
     zmq_port_ping_interval = Integer(zmq_port_ping_interval_default_value,config=True,
         help="""Specifies the ping interval that should be used by zmq port associated with spawned kernels. Set this 
@@ -165,7 +165,7 @@ class EnterpriseGatewayApp(KernelGatewayApp):
 
     @default('zmq_port_ping_interval')
     def zmq_port_ping_interval_default(self):
-        return int(os.getenv(self.zmq_port_ping_interval,self.zmq_port_ping_interval_default_value))
+        return int(os.getenv(self.zmq_port_ping_interval_env, self.zmq_port_ping_interval_default_value))
 
 
 
