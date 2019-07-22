@@ -269,6 +269,7 @@ class EnterpriseGatewayApp(KernelGatewayApp):
         # setting ws_ping_interval value that can allow it to be modified for the purpose of toggling ping mechanism
         # for zmq web-sockets or increasing/decreasing web socket ping interval/timeouts.
         self.web_app.settings['ws_ping_interval'] = self.ws_ping_interval * 1000
+        self.log.debug("Websocket Ping interval set as:- " + str(self.web_app.settings['ws_ping_interval']))
 
     def start(self):
         """Starts an IO loop for the application. """

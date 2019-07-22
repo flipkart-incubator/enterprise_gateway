@@ -128,7 +128,7 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
     def handle_yarn_queue_timeout(self):
 
         # each time we sleep we substract equal amount of time for the kernel launch timeout
-        self.log.info("Kernel Launch Timeout - {}".format(self.kernel_launch_timeout))
+        self.log.debug("Kernel Launch Timeout - {}".format(self.kernel_launch_timeout))
         time.sleep(poll_interval)
         self.kernel_launch_timeout -= poll_interval
 
