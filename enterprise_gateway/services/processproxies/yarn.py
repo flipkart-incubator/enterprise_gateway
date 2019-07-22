@@ -29,7 +29,7 @@ yarn_shutdown_wait_time = float(os.getenv('EG_YARN_SHUTDOWN_WAIT_TIME', '15.0'))
 
 class YarnClusterProcessProxy(RemoteProcessProxy):
     initial_states = {'NEW', 'SUBMITTED', 'ACCEPTED', 'RUNNING'}
-    final_states = {'FINISHED', 'KILLED'}  # Don't include FAILED state
+    final_states = {'FINISHED', 'KILLED','FAILED'}  # Don't include FAILED state ! We WILL.
 
     def __init__(self, kernel_manager, proxy_config):
         super(YarnClusterProcessProxy, self).__init__(kernel_manager, proxy_config)
