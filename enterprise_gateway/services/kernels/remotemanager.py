@@ -12,26 +12,30 @@ from ..processproxies.processproxy import LocalProcessProxy, RemoteProcessProxy
 from ..sessions.kernelsessionmanager import KernelSessionManager
 from tornado import gen
 from ipython_genutils.py3compat import (bytes_to_str, str_to_bytes)
-
+from enterprise_gateway.metric.statsd_client import Statsd
 
 class RemoteMappingKernelManager(SeedingMappingKernelManager):
     """Extends the SeedingMappingKernelManager.
 
     This class is responsible for managing remote kernels.
     """
+    statsd = Statsd.getClient()
 
     def _kernel_manager_class_default(self):
         return 'enterprise_gateway.services.kernels.remotemanager.RemoteKernelManager'
 
+    @statsd.timer('StartKernelTimer')
     @gen.coroutine
     def start_kernel(self, *args, **kwargs):
         username = KernelSessionManager.get_kernel_username(**kwargs)
         self.log.debug("RemoteMappingKernelManager.start_kernel: {kernel_name}, kernel_username: {username}".
                        format(kernel_name=kwargs['kernel_name'], username=username))
+
         kernel_id = yield gen.maybe_future(super(RemoteMappingKernelManager, self).start_kernel(*args, **kwargs))
         self.parent.kernel_session_manager.create_session(kernel_id, **kwargs)
         raise gen.Return(kernel_id)
 
+    @statsd.timer('RemoveKernelTimer')
     def remove_kernel(self, kernel_id):
         super(RemoteMappingKernelManager, self).remove_kernel(kernel_id)
         self.parent.kernel_session_manager.delete_session(kernel_id)
@@ -88,6 +92,7 @@ class RemoteKernelManager(KernelGatewayIOLoopKernelManager):
     appropriate class (previously pulled from the kernel spec).  The process 'proxy' is
     returned - upon which methods of poll(), wait(), send_signal(), and kill() can be called.
     """
+    statsd = Statsd.getClient()
 
     def __init__(self, **kw):
         super(KernelGatewayIOLoopKernelManager, self).__init__(**kw)
@@ -146,6 +151,7 @@ class RemoteKernelManager(KernelGatewayIOLoopKernelManager):
         if isinstance(self.process_proxy, RemoteProcessProxy):
             self.process_proxy.shutdown_listener()
 
+    @statsd.timer('RestartKernelTimer')
     def restart_kernel(self, now=False, **kw):
         self.restarting = True
         kernel_id = os.path.basename(self.connection_file).replace('kernel-', '').replace('.json', '')
