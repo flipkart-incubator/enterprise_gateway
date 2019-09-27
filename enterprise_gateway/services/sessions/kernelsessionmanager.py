@@ -13,8 +13,6 @@ import threading
 kernels_lock = threading.Lock()
 kernel_session_location = os.getenv('EG_KERNEL_SESSION_LOCATION', jupyter_data_dir())
 
-from enterprise_gateway.metric.statsd_client import Statsd
-
 class KernelSessionManager(LoggingConfigurable):
     """
         KernelSessionManager is used to manage kernel sessions.  It loads the complete set of persisted kernel
@@ -40,12 +38,18 @@ class KernelSessionManager(LoggingConfigurable):
             self.kernel_session_file = os.path.join(self._get_sessions_loc(), 'kernels.json')
             self._load_sessions()
 
-        self.statsdClient  = Statsd.getClient()
-        # self.stats_kernel_counter = client.get_counter("KernelCount")
-        # self.stats_user_counter = client.get_counter("UserCount")
-        # self.stats_avg_kernel_per_user_gauge = client.get_gauge("AvgKernelPerUser")
         self.total_kernel_count = 0
         self.total_user_count = 0
+
+    def get_metrics(self):
+        avg_kernel_per_user_val = 0 if self.total_user_count==0 else (self.total_kernel_count/self.total_user_count)
+        metric_dict = {
+            'total_kernels': self.total_kernel_count,
+            'total_users': self.total_user_count,
+            'avg_kernel_per_user': avg_kernel_per_user_val
+        }
+        return metric_dict
+
     def create_session(self, kernel_id, **kwargs):
         """
             Creates a session associated with this kernel.  User and KernelName, along with connection information
@@ -89,15 +93,12 @@ class KernelSessionManager(LoggingConfigurable):
             if username not in self._sessionsByUser:
                 self._sessionsByUser[username] = []
                 self._sessionsByUser[username].append(kernel_id)
-                self.statsdClient.incr('KernelCount',1)
-                self.statsdClient.incr('UserCount', 1)
                 self.total_user_count+=1
                 self.total_kernel_count += 1
             else:
                 # Only append if not there yet (e.g. restarts will be there already)
                 if kernel_id not in self._sessionsByUser[username]:
                     self._sessionsByUser[username].append(kernel_id)
-                    self.statsdClient.incr('KernelCount', 1)
                     self.total_kernel_count+=1
             self._commit_sessions()  # persist changes
         finally:
@@ -164,10 +165,8 @@ class KernelSessionManager(LoggingConfigurable):
                 if username in self._sessionsByUser and kernel_id in self._sessionsByUser[username]:
                     self._sessionsByUser[username].remove(kernel_id)
                     if len(self._sessionsByUser[username]) == 0:
-                        self.statsdClient.decr('UserCount',1)
                         self.total_user_count-=1
                 self._sessions.pop(kernel_id, None)
-                self.statsdClient.decr('KernelCount',1)
                 self.total_kernel_count-=1
 
 
@@ -176,12 +175,6 @@ class KernelSessionManager(LoggingConfigurable):
             kernels_lock.release()
 
     def _commit_sessions(self):
-        self.log.info("Total User Count %d".format(self.total_user_count))
-        self.log.info("Total Kernel Count %d".format(self.total_kernel_count))
-        avg_kernel_per_user_val = 0 if self.total_user_count==0 else (self.total_kernel_count/self.total_user_count)
-        self.log.info("Avg Kernel Per User %d".format(avg_kernel_per_user_val))
-        self.statsdClient.gauge('AvgKernelPerUser',avg_kernel_per_user_val)
-
         if self.enable_persistence:
             # Commits the sessions dictionary to persistent store.  Caller is responsible for single-threading call.
             with open(self.kernel_session_file, 'w') as fp:

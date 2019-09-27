@@ -3,7 +3,6 @@
 """Kernel managers that operate against a remote process."""
 
 import os
-import sys
 import signal
 import re
 from ipython_genutils.importstring import import_item
@@ -12,7 +11,7 @@ from ..processproxies.processproxy import LocalProcessProxy, RemoteProcessProxy
 from ..sessions.kernelsessionmanager import KernelSessionManager
 from tornado import gen
 from ipython_genutils.py3compat import (bytes_to_str, str_to_bytes)
-from enterprise_gateway.metric.statsd_client import Statsd
+from enterprise_gateway.services.sessions.statsd_client import Statsd
 
 class RemoteMappingKernelManager(SeedingMappingKernelManager):
     """Extends the SeedingMappingKernelManager.

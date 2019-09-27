@@ -32,6 +32,7 @@ Jupyter Notebooks to share resources across an Apache Spark cluster.
         'enterprise_gateway.services.kernelspecs',
         'enterprise_gateway.services.processproxies',
         'enterprise_gateway.services.sessions',
+        'enterprise_gateway.services.api',
     ],
     scripts=[
         'scripts/jupyter-enterprisegateway'
