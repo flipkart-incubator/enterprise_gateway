@@ -12,7 +12,7 @@ with open(os.path.join(here, 'enterprise_gateway', '_version.py')) as f:
     exec(f.read(), {}, version_ns)
 
 setup_args = dict(
-    name='jupyter_enterprise_gateway',
+    name='jupyter-enterprise-gateway',
     author='Jupyter Development Team',
     author_email='jupyter@googlegroups.com',
     url='http://github.com/jupyter-incubator/enterprise_gateway',
@@ -40,8 +40,8 @@ Jupyter Notebooks to share resources across an Apache Spark cluster.
     install_requires=[
         'jupyter_client>=5.2.0',
         'jupyter_core>=4.4.0',
-        'jupyter_kernel_gateway>=2.3.0',
-        'notebook>=5.7.6,<6.0',
+        'jupyter_kernel_gateway==2.4.0.fk.1',
+        'notebook==5.7.8.fk.1',
         'paramiko>=2.1.2',
         'pexpect>=4.2.0',
         'pycrypto>=2.6.1',
