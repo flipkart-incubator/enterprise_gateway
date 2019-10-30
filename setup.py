@@ -40,8 +40,8 @@ Jupyter Notebooks to share resources across an Apache Spark cluster.
     install_requires=[
         'jupyter_client>=5.2.0',
         'jupyter_core>=4.4.0',
-        'jupyter_kernel_gateway==2.4.0.fk.1',
-        'notebook==5.7.8.fk.1',
+        'jupyter_kernel_gateway==2.4.0.fk.2',
+        'notebook==5.7.8.fk.2',
         'paramiko>=2.1.2',
         'pexpect>=4.2.0',
         'pycrypto>=2.6.1',
