@@ -505,6 +505,14 @@ class BaseProcessProxyABC(with_metaclass(abc.ABCMeta, object)):
         """
         if reason is None:
             reason = "Internal server issue!"
+            self.kernel_manager.parent.parent.kernel_session_manager.statsd_client \
+                .gauge('Other_Errors', 1)
+        elif 'launch' and 'timeout' in reason.split(' '):
+            self.kernel_manager.parent.parent.kernel_session_manager.statsd_client \
+                .gauge('Launch_Timeout_Errors', 1)
+        elif 'max' and 'kernels' in reason.split(' '):
+            self.kernel_manager.parent.parent.kernel_session_manager.statsd_client \
+                .gauge('Kernel_Limit_Errors', 1)
 
         self.log.error(reason)
         if http_status_code:

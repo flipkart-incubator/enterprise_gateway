@@ -13,6 +13,9 @@ import threading
 kernels_lock = threading.Lock()
 kernel_session_location = os.getenv('EG_KERNEL_SESSION_LOCATION', jupyter_data_dir())
 
+import time
+from enterprise_gateway.services.sessions.statsd_client import Statsd
+
 class KernelSessionManager(LoggingConfigurable):
     """
         KernelSessionManager is used to manage kernel sessions.  It loads the complete set of persisted kernel
@@ -29,11 +32,13 @@ class KernelSessionManager(LoggingConfigurable):
         help="""Enable kernel session persistence.  Default = False"""
     )
 
+    statsd_client = Statsd.getClient()
+
     def __init__(self, kernel_manager, *args, **kwargs):
         super(KernelSessionManager, self).__init__(*args, **kwargs)
         self.kernel_manager = kernel_manager
         self._sessions = dict()
-        self._sessionsByUser = dict()
+        self._sessionsByUser = dict(dict())
         if self.enable_persistence:
             self.kernel_session_file = os.path.join(self._get_sessions_loc(), 'kernels.json')
             self._load_sessions()
@@ -91,15 +96,15 @@ class KernelSessionManager(LoggingConfigurable):
             self._sessions[kernel_id] = kernel_session
             username = kernel_session['username']
             if username not in self._sessionsByUser:
-                self._sessionsByUser[username] = []
-                self._sessionsByUser[username].append(kernel_id)
-                self.total_user_count+=1
+                self._sessionsByUser[username] = {}
+                self._sessionsByUser[username][kernel_id] = time.time()
+                self.total_user_count += 1
                 self.total_kernel_count += 1
             else:
                 # Only append if not there yet (e.g. restarts will be there already)
                 if kernel_id not in self._sessionsByUser[username]:
-                    self._sessionsByUser[username].append(kernel_id)
-                    self.total_kernel_count+=1
+                    self._sessionsByUser[username][kernel_id] = time.time()
+                    self.total_kernel_count += 1
             self._commit_sessions()  # persist changes
         finally:
             kernels_lock.release()
@@ -154,6 +159,12 @@ class KernelSessionManager(LoggingConfigurable):
         if self.enable_persistence:
             self.log.info("Deleted persisted kernel session for id: %s" % kernel_id)
 
+    def calculate_and_push_kernel_runtime(self, username, kernel_id):
+        start_time = self._sessionsByUser[username][kernel_id]
+        end_time = time.time()
+        kernel_runtime = end_time - start_time
+        self.statsd_client.gauge('Kernel_Runtime', kernel_runtime)
+
     def _delete_sessions(self, kernel_ids):
         # Remove unstarted sessions and rewrite
         kernels_lock.acquire()
@@ -163,11 +174,13 @@ class KernelSessionManager(LoggingConfigurable):
                 kernel_session = self._sessions[kernel_id]
                 username = kernel_session['username']
                 if username in self._sessionsByUser and kernel_id in self._sessionsByUser[username]:
-                    self._sessionsByUser[username].remove(kernel_id)
+                    self.calculate_and_push_kernel_runtime(username, kernel_id)
+                    self._sessionsByUser[username].pop(kernel_id)
                     if len(self._sessionsByUser[username]) == 0:
-                        self.total_user_count-=1
+                        self.total_user_count -= 1
+                        self._sessionsByUser.pop(username)
                 self._sessions.pop(kernel_id, None)
-                self.total_kernel_count-=1
+                self.total_kernel_count -= 1
 
 
             self._commit_sessions()  # persist changes
