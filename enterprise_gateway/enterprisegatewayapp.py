@@ -23,7 +23,7 @@ from kernel_gateway.services.sessions.sessionmanager import SessionManager
 from ._version import __version__
 from .services.sessions.kernelsessionmanager import KernelSessionManager, FileKernelSessionManager
 from .services.kernels.remotemanager import RemoteMappingKernelManager
-from .services.api.handlers import MetricGenerator
+from enterprise_gateway.services.api.handlers import MetricGenerator
 
 
 class EnterpriseGatewayApp(KernelGatewayApp):

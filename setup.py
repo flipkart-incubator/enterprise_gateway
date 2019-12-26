@@ -36,6 +36,7 @@ Apache Spark, Kubernetes and others..
         'enterprise_gateway',
         'enterprise_gateway.client',
         'enterprise_gateway.services',
+        'enterprise_gateway.services.api',
         'enterprise_gateway.services.kernels',
         'enterprise_gateway.services.processproxies',
         'enterprise_gateway.services.sessions'
@@ -44,6 +45,8 @@ Apache Spark, Kubernetes and others..
         'scripts/jupyter-enterprisegateway'
     ],
     install_requires=[
+        'statsd==3.2.1',
+        'retrying',
         'docker>=3.5.0',
         'jinja2>=2.10',
         'jupyter_client>=5.2.0',
