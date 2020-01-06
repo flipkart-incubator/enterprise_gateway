@@ -207,7 +207,7 @@ class KernelSessionManager(LoggingConfigurable):
 
     def calculate_and_push_kernel_runtime(self, kernel_id):
         kernel_runtime = time.time() - self._kernelStartTime[kernel_id]
-        self.statsd_client.gauge('Kernel_Runtime', kernel_runtime, delta=True)
+        self.statsd_client.timing('Kernel_Runtime', kernel_runtime)
 
     def _delete_sessions(self, kernel_ids):
         # Remove unstarted sessions and rewrite
