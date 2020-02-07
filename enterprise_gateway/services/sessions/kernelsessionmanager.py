@@ -279,9 +279,15 @@ class KernelSessionManager(LoggingConfigurable):
         -------
         int corresponding to the number of active sessions associated with given user
         """
+        count = 0
         if username in self._sessionsByUser:
-            return len(self._sessionsByUser[username])
-        return 0
+            for kernel_id in self._sessionsByUser[username]:
+                kernel_session = self._sessions[kernel_id]
+                # [MLP] Do not count Python 3 (Non-Spark) kernels
+                if kernel_session['kernel_name'] != 'python3':
+                    count = count + 1
+
+        return count
 
     @staticmethod
     def get_kernel_username(**kwargs):
