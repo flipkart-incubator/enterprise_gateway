@@ -51,7 +51,7 @@ Apache Spark, Kubernetes and others..
         'jinja2>=2.10',
         'jupyter_client==5.3.5.dev1',
         'jupyter_core>=4.4.0',
-        'jupyter_kernel_gateway==2.4.1.dev3',
+        'jupyter_kernel_gateway==2.4.1.dev4',
         'kubernetes>=4.0.0',
         'notebook==5.7.9.dev4',
         'paramiko>=2.1.2',
