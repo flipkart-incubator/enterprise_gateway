@@ -49,7 +49,7 @@ Apache Spark, Kubernetes and others..
         'retrying',
         'docker>=3.5.0',
         'jinja2>=2.10',
-        'jupyter_client>=5.2.0',
+        'jupyter_client==5.3.5.dev1',
         'jupyter_core>=4.4.0',
         'jupyter_kernel_gateway==2.4.1.dev3',
         'kubernetes>=4.0.0',
