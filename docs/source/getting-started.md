@@ -32,10 +32,24 @@ Jupyter Enterprise Gateway exposes the following features and functionality:
 * Secure communication from client to kernel
 * Persistent kernel sessions (see [Roadmap](roadmap.html#project-roadmap))
 * Configuration profiles (see [Roadmap](roadmap.html#project-roadmap))
-* Feature parity with [Jupyter Kernel Gateway](http://jupyter-kernel-gateway.readthedocs.io/en/latest/)
+* Feature parity with [Jupyter Kernel Gateway's](http://jupyter-kernel-gateway.readthedocs.io/en/latest/) websocket-mode.
 * A CLI for launching the enterprise gateway server: `jupyter enterprisegateway OPTIONS`
 * A Python 2.7 and 3.3+ compatible implementation
 
+
+### Kernel Gateway vs. Enterprise Gateway
+Enterprise Gateway was formerly built directly on Kernel Gateway.  At that time, it had complete feature parity with Kernel Gateway.  However, in order to address various roadmap items, Enterprise Gateway removed its dependency on Kernel Gateway, so now the question arises, when does one choose Enterprise Gateway over Kernel Gateway?
+
+#### Use Enterprise Gateway if...
+1. You have a large computer cluster consisting of limited resources (GPUs, large memory, etc) and users require those resources from notebooks
+2. You have large numbers of users requiring access to a shared compute cluster
+3. You require some amount of High Availability/Disaster Recovery such that another Gateway server can be spun up to service existing (and remote) kernels
+
+#### Use Kernel Gateway if...
+1. You have a small user pool where the resources of the Gateway server can be shared amongst those users (no remote kernel support)
+2. You wish to configured the [notebook-http mode](https://jupyter-kernel-gateway.readthedocs.io/en/latest/http-mode.html) functionality where a specific Notebook provides HTTP endpoints
+
+Note that Enterprise Gateway also supports local kernels by default.  However, HA/DR functionality won't be affective unless kernels run remotely.
 
 ### Installing Enterprise Gateway
 
@@ -133,7 +147,7 @@ Note that because the Apache Toree kernel, and its supporting libraries, will be
 
 #### Sample kernelspecs
 
-We provide sample kernel configuration and launcher tar files as part of [each release](https://github.com/jupyter/enterprise_gateway/releases) (e.g. [jupyter_enterprise_gateway_kernelspecs-2.0.0.tar.gz](https://github.com/jupyter/enterprise_gateway/releases/download/v2.0.0/jupyter_enterprise_gateway_kernelspecs-2.0.0.tar.gz)) that can be extracted and modified to fit your configuration.
+We provide sample kernel configuration and launcher tar files as part of [each release](https://github.com/jupyter/enterprise_gateway/releases) (e.g. [jupyter_enterprise_gateway_kernelspecs-2.1.0.tar.gz](https://github.com/jupyter/enterprise_gateway/releases/download/v2.1.0/jupyter_enterprise_gateway_kernelspecs-2.1.0.tar.gz)) that can be extracted and modified to fit your configuration.
 
 For information about how to build your own kernel-based docker image for use by Enterprise Gateway see [Custom kernel images](docker.html#custom-kernel-images).
 
