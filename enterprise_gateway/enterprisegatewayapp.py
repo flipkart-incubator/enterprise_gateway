@@ -558,6 +558,7 @@ class EnterpriseGatewayApp(JupyterApp):
         self.web_app = web.Application(
             handlers=handlers,
             kernel_manager=self.kernel_manager,
+            metric_generator=self.metric_generator,
             session_manager=self.session_manager,
             contents_manager=self.contents_manager,
             kernel_spec_manager=self.kernel_spec_manager,
