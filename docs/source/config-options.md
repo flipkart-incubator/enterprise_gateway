@@ -4,14 +4,11 @@ Jupyter Enterprise Gateway adheres to the
 [Jupyter common configuration approach](https://jupyter.readthedocs.io/en/latest/projects/config.html)
 . You can configure an instance of Enterprise Gateway using:
 
-1. A configuration file
+1. A configuration file (recommended)
 2. Command line parameters
 3. Environment variables
 
-Note that because Enterprise Gateway is built on Kernel Gateway, all of the `KernelGatewayApp` options 
-can be specified as `EnterpriseGatewayApp` options.  In addition, the `KG_` prefix of inherited environment 
-variables has also been preserved, while those variables introduced by Enterprise Gateway will be
-prefixed with `EG_`.
+See [Dynamic Configurables](#dynamic-configurables) for additional information.
 
 To generate a template configuration file, run the following:
 
@@ -25,7 +22,7 @@ To see the same configuration options at the command line, run the following:
 jupyter enterprisegateway --help-all
 ```
 
-A snapshot of this help appears below for ease of reference on the web.
+A snapshot of this help appears below for ease of reference on the web.  
 
 ```
 Jupyter Enterprise Gateway
@@ -41,48 +38,38 @@ on full configurables, see '--help-all'.
 
 --debug
     set log level to logging.DEBUG (maximize logging output)
--y
-    Answer yes to any questions instead of prompting.
 --generate-config
     generate default config file
---certfile=<Unicode> (KernelGatewayApp.certfile)
-    Default: None
-    The full path to an SSL/TLS certificate file. (KG_CERTFILE env var)
---seed_uri=<Unicode> (KernelGatewayApp.seed_uri)
-    Default: None
-    Runs the notebook (.ipynb) at the given URI on every kernel launched. No
-    seed by default. (KG_SEED_URI env var)
---ip=<Unicode> (KernelGatewayApp.ip)
-    Default: '127.0.0.1'
-    IP address on which to listen (KG_IP env var)
+-y
+    Answer yes to any questions instead of prompting.
 --log-level=<Enum> (Application.log_level)
     Default: 30
     Choices: (0, 10, 20, 30, 40, 50, 'DEBUG', 'INFO', 'WARN', 'ERROR', 'CRITICAL')
     Set the log level by value or name.
---port=<Integer> (KernelGatewayApp.port)
+--config=<Unicode> (JupyterApp.config_file)
+    Default: ''
+    Full path of a config file.
+--ip=<Unicode> (EnterpriseGatewayApp.ip)
+    Default: '127.0.0.1'
+    IP address on which to listen (EG_IP env var)
+--port=<Int> (EnterpriseGatewayApp.port)
     Default: 8888
-    Port on which to listen (KG_PORT env var)
---api=<Unicode> (KernelGatewayApp.api)
-    Default: 'kernel_gateway.jupyter_websocket'
-    Controls which API to expose, that of a Jupyter notebook server, the seed
-    notebook's, or one provided by another module, respectively using values
-    'kernel_gateway.jupyter_websocket', 'kernel_gateway.notebook_http', or
-    another fully qualified module name (KG_API env var)
---port_retries=<Integer> (KernelGatewayApp.port_retries)
+    Port on which to listen (EG_PORT env var)
+--port_retries=<Int> (EnterpriseGatewayApp.port_retries)
     Default: 50
     Number of ports to try if the specified port is not available
-    (KG_PORT_RETRIES env var)
---client-ca=<Unicode> (KernelGatewayApp.client_ca)
+    (EG_PORT_RETRIES env var)
+--keyfile=<Unicode> (EnterpriseGatewayApp.keyfile)
+    Default: None
+    The full path to a private key file for usage with SSL/TLS. (EG_KEYFILE env
+    var)
+--certfile=<Unicode> (EnterpriseGatewayApp.certfile)
+    Default: None
+    The full path to an SSL/TLS certificate file. (EG_CERTFILE env var)
+--client-ca=<Unicode> (EnterpriseGatewayApp.client_ca)
     Default: None
     The full path to a certificate authority certificate for SSL/TLS client
-    authentication. (KG_CLIENT_CA env var)
---config=<Unicode> (JupyterApp.config_file)
-    Default: u''
-    Full path of a config file.
---keyfile=<Unicode> (KernelGatewayApp.keyfile)
-    Default: None
-    The full path to a private key file for usage with SSL/TLS. (KG_KEYFILE env
-    var)
+    authentication. (EG_CLIENT_CA env var)
 
 Class parameters
 ----------------
@@ -94,32 +81,33 @@ are allowed, e.g.:: `--C.a='range(3)'` For setting C.a=[0,1,2].
 EnterpriseGatewayApp options
 ----------------------------
 --EnterpriseGatewayApp.allow_credentials=<Unicode>
-    Default: u''
-    Sets the Access-Control-Allow-Credentials header. (KG_ALLOW_CREDENTIALS env
+    Default: ''
+    Sets the Access-Control-Allow-Credentials header. (EG_ALLOW_CREDENTIALS env
     var)
 --EnterpriseGatewayApp.allow_headers=<Unicode>
-    Default: u''
-    Sets the Access-Control-Allow-Headers header. (KG_ALLOW_HEADERS env var)
+    Default: ''
+    Sets the Access-Control-Allow-Headers header. (EG_ALLOW_HEADERS env var)
 --EnterpriseGatewayApp.allow_methods=<Unicode>
-    Default: u''
-    Sets the Access-Control-Allow-Methods header. (KG_ALLOW_METHODS env var)
+    Default: ''
+    Sets the Access-Control-Allow-Methods header. (EG_ALLOW_METHODS env var)
 --EnterpriseGatewayApp.allow_origin=<Unicode>
-    Default: u''
-    Sets the Access-Control-Allow-Origin header. (KG_ALLOW_ORIGIN env var)
+    Default: ''
+    Sets the Access-Control-Allow-Origin header. (EG_ALLOW_ORIGIN env var)
+--EnterpriseGatewayApp.alt_yarn_endpoint=<Unicode>
+    Default: None
+    The http url specifying the alternate YARN Resource Manager.  This value
+    should be set when YARN Resource Managers are configured for high
+    availability.  Note: If both YARN endpoints are NOT set, the YARN library
+    will use the files within the local HADOOP_CONFIG_DIR to determine the
+    active resource manager. (EG_ALT_YARN_ENDPOINT env var)
 --EnterpriseGatewayApp.answer_yes=<Bool>
     Default: False
     Answer yes to any prompts.
---EnterpriseGatewayApp.api=<Unicode>
-    Default: 'kernel_gateway.jupyter_websocket'
-    Controls which API to expose, that of a Jupyter notebook server, the seed
-    notebook's, or one provided by another module, respectively using values
-    'kernel_gateway.jupyter_websocket', 'kernel_gateway.notebook_http', or
-    another fully qualified module name (KG_API env var)
 --EnterpriseGatewayApp.auth_token=<Unicode>
-    Default: u''
-    Authorization token required for all requests (KG_AUTH_TOKEN env var)
+    Default: ''
+    Authorization token required for all requests (EG_AUTH_TOKEN env var)
 --EnterpriseGatewayApp.authorized_users=<Set>
-    Default: set([])
+    Default: set()
     Comma-separated list of user names (e.g., ['bob','alice']) against which
     KERNEL_USERNAME will be compared.  Any match (case-sensitive) will allow the
     kernel's launch, otherwise an HTTP 403 (Forbidden) error will be raised.
@@ -128,38 +116,43 @@ EnterpriseGatewayApp options
     (EG_AUTHORIZED_USERS env var - non-bracketed, just comma-separated)
 --EnterpriseGatewayApp.base_url=<Unicode>
     Default: '/'
-    The base path for mounting all API resources (KG_BASE_URL env var)
+    The base path for mounting all API resources (EG_BASE_URL env var)
 --EnterpriseGatewayApp.certfile=<Unicode>
     Default: None
-    The full path to an SSL/TLS certificate file. (KG_CERTFILE env var)
+    The full path to an SSL/TLS certificate file. (EG_CERTFILE env var)
 --EnterpriseGatewayApp.client_ca=<Unicode>
     Default: None
     The full path to a certificate authority certificate for SSL/TLS client
-    authentication. (KG_CLIENT_CA env var)
+    authentication. (EG_CLIENT_CA env var)
 --EnterpriseGatewayApp.conductor_endpoint=<Unicode>
     Default: None
     The http url for accessing the Conductor REST API. (EG_CONDUCTOR_ENDPOINT
     env var)
 --EnterpriseGatewayApp.config_file=<Unicode>
-    Default: u''
+    Default: ''
     Full path of a config file.
 --EnterpriseGatewayApp.config_file_name=<Unicode>
-    Default: u''
+    Default: ''
     Specify a config file to load.
 --EnterpriseGatewayApp.default_kernel_name=<Unicode>
-    Default: u''
-    Default kernel name when spawning a kernel (KG_DEFAULT_KERNEL_NAME env var)
+    Default: ''
+    Default kernel name when spawning a kernel (EG_DEFAULT_KERNEL_NAME env var)
+--EnterpriseGatewayApp.dynamic_config_interval=<Int>
+    Default: 0
+    Specifies the number of seconds configuration files are polled for changes.
+    A value of 0 or less disables dynamic config updates.
+    (EG_DYNAMIC_CONFIG_INTERVAL env var)
 --EnterpriseGatewayApp.env_process_whitelist=<List>
     Default: []
     Environment variables allowed to be inherited from the spawning process by
-    the kernel
+    the kernel. (EG_ENV_PROCESS_WHITELIST env var)
+--EnterpriseGatewayApp.env_whitelist=<List>
+    Default: []
+    Environment variables allowed to be set when a client requests a new kernel.
+    (EG_ENV_WHITELIST env var)
 --EnterpriseGatewayApp.expose_headers=<Unicode>
-    Default: u''
-    Sets the Access-Control-Expose-Headers header. (KG_EXPOSE_HEADERS env var)
---EnterpriseGatewayApp.force_kernel_name=<Unicode>
-    Default: u''
-    Override any kernel name specified in a notebook or request
-    (KG_FORCE_KERNEL_NAME env var)
+    Default: ''
+    Sets the Access-Control-Expose-Headers header. (EG_EXPOSE_HEADERS env var)
 --EnterpriseGatewayApp.generate_config=<Bool>
     Default: False
     Generate default config file.
@@ -169,19 +162,28 @@ EnterpriseGatewayApp options
     (EG_IMPERSONATION_ENABLED env var)
 --EnterpriseGatewayApp.ip=<Unicode>
     Default: '127.0.0.1'
-    IP address on which to listen (KG_IP env var)
+    IP address on which to listen (EG_IP env var)
 --EnterpriseGatewayApp.kernel_manager_class=<Type>
     Default: 'enterprise_gateway.services.kernels.remotemanager.RemoteMapp...
-    The kernel manager class to use. Should be a subclass of
+    The kernel manager class to use. Must be a subclass of
     `notebook.services.kernels.MappingKernelManager`.
+--EnterpriseGatewayApp.kernel_session_manager_class=<Type>
+    Default: 'enterprise_gateway.services.sessions.kernelsessionmanager.Fi...
+    The kernel session manager class to use. Must be a subclass of
+    `enterprise_gateway.services.sessions.KernelSessionManager`.
 --EnterpriseGatewayApp.kernel_spec_manager_class=<Type>
-    Default: 'enterprise_gateway.services.kernelspecs.remotekernelspec.Rem...
-    The kernel spec manager class to use. Should be a subclass of
+    Default: 'jupyter_client.kernelspec.KernelSpecManager'
+    The kernel spec manager class to use. Must be a subclass of
     `jupyter_client.kernelspec.KernelSpecManager`.
 --EnterpriseGatewayApp.keyfile=<Unicode>
     Default: None
-    The full path to a private key file for usage with SSL/TLS. (KG_KEYFILE env
+    The full path to a private key file for usage with SSL/TLS. (EG_KEYFILE env
     var)
+--EnterpriseGatewayApp.list_kernels=<Bool>
+    Default: False
+    Permits listing of the running kernels using API endpoints /api/kernels and
+    /api/sessions. (EG_LIST_KERNELS env var) Note: Jupyter Notebook allows this
+    by default but Jupyter Enterprise Gateway does not.
 --EnterpriseGatewayApp.log_datefmt=<Unicode>
     Default: '%Y-%m-%d %H:%M:%S'
     The date format used by logging formatters for %(asctime)s
@@ -193,105 +195,125 @@ EnterpriseGatewayApp options
     Choices: (0, 10, 20, 30, 40, 50, 'DEBUG', 'INFO', 'WARN', 'ERROR', 'CRITICAL')
     Set the log level by value or name.
 --EnterpriseGatewayApp.max_age=<Unicode>
-    Default: u''
-    Sets the Access-Control-Max-Age header. (KG_MAX_AGE env var)
---EnterpriseGatewayApp.max_kernels=<Integer>
+    Default: ''
+    Sets the Access-Control-Max-Age header. (EG_MAX_AGE env var)
+--EnterpriseGatewayApp.max_kernels=<Int>
     Default: None
     Limits the number of kernel instances allowed to run by this gateway.
-    Unbounded by default. (KG_MAX_KERNELS env var)
---EnterpriseGatewayApp.max_kernels_per_user=<Integer>
+    Unbounded by default. (EG_MAX_KERNELS env var)
+--EnterpriseGatewayApp.max_kernels_per_user=<Int>
     Default: -1
     Specifies the maximum number of kernels a user can have active
     simultaneously.  A value of -1 disables enforcement.
     (EG_MAX_KERNELS_PER_USER env var)
---EnterpriseGatewayApp.port=<Integer>
+--EnterpriseGatewayApp.port=<Int>
     Default: 8888
-    Port on which to listen (KG_PORT env var)
+    Port on which to listen (EG_PORT env var)
 --EnterpriseGatewayApp.port_range=<Unicode>
     Default: '0..0'
-    Specifies the lower and upper port numbers from which ports are created.
-    The bounded values are separated by '..' (e.g., 33245..34245 specifies a
-    range of 1000 ports to be randomly selected). A range of zero (e.g.,
-    33245..33245 or 0..0) disables port-range enforcement.  (EG_PORT_RANGE env
-    var)
---EnterpriseGatewayApp.port_retries=<Integer>
+    Specifies the lower and upper port numbers from which ports are created. The
+    bounded values are separated by '..' (e.g., 33245..34245 specifies a range
+    of 1000 ports to be randomly selected). A range of zero (e.g., 33245..33245
+    or 0..0) disables port-range enforcement.  (EG_PORT_RANGE env var)
+--EnterpriseGatewayApp.port_retries=<Int>
     Default: 50
     Number of ports to try if the specified port is not available
-    (KG_PORT_RETRIES env var)
---EnterpriseGatewayApp.prespawn_count=<Integer>
-    Default: None
-    Number of kernels to prespawn using the default language. No prespawn by
-    default. (KG_PRESPAWN_COUNT env var)
+    (EG_PORT_RETRIES env var)
 --EnterpriseGatewayApp.remote_hosts=<List>
     Default: ['localhost']
     Bracketed comma-separated list of hosts on which DistributedProcessProxy
     kernels will be launched e.g., ['host1','host2']. (EG_REMOTE_HOSTS env var -
     non-bracketed, just comma-separated)
---EnterpriseGatewayApp.seed_uri=<Unicode>
-    Default: None
-    Runs the notebook (.ipynb) at the given URI on every kernel launched. No
-    seed by default. (KG_SEED_URI env var)
 --EnterpriseGatewayApp.trust_xheaders=<CBool>
     Default: False
     Use x-* header values for overriding the remote-ip, useful when application
-    is behing a proxy. (KG_TRUST_XHEADERS env var)
+    is behing a proxy. (EG_TRUST_XHEADERS env var)
 --EnterpriseGatewayApp.unauthorized_users=<Set>
-    Default: set(['root'])
+    Default: {'root'}
     Comma-separated list of user names (e.g., ['root','admin']) against which
     KERNEL_USERNAME will be compared.  Any match (case-sensitive) will prevent
     the kernel's launch and result in an HTTP 403 (Forbidden) error.
     (EG_UNAUTHORIZED_USERS env var - non-bracketed, just comma-separated)
+--EnterpriseGatewayApp.ws_ping_interval=<Int>
+    Default: 30
+    Specifies the ping interval(in seconds) that should be used by zmq port
+     associated withspawned kernels.Set this variable to 0 to disable ping mechanism.
+    (EG_WS_PING_INTERVAL_SECS env var)
 --EnterpriseGatewayApp.yarn_endpoint=<Unicode>
-    Default: 'http://localhost:8088/ws/v1/cluster'
-    The http url for accessing the YARN Resource Manager. (EG_YARN_ENDPOINT env
-    var)
+    Default: None
+    The http url specifying the YARN Resource Manager. Note: If this value is
+    NOT set, the YARN library will use the files within the local
+    HADOOP_CONFIG_DIR to determine the active resource manager.
+    (EG_YARN_ENDPOINT env var)
 --EnterpriseGatewayApp.yarn_endpoint_security_enabled=<Bool>
     Default: False
     Is YARN Kerberos/SPNEGO Security enabled (True/False).
     (EG_YARN_ENDPOINT_SECURITY_ENABLED env var)
---EnterpriseGatewayApp.ws_ping_interval=<Int>
-    Default: 30
-    Specifies the value of ws_ping_interval that is being used for websocket
-    ping pong mechanism in ZMQ Port Handler from notebook server in seconds.
-    (EG_WS_PING_INTERVAL_SECS env var) 
---KernelSessionManager.enable_persistence=<Bool>
+
+FileKernelSessionManager options
+--------------------------------
+--FileKernelSessionManager.enable_persistence=<Bool>
     Default: False
-    Enable kernel session persistence (True or False).  
+    Enable kernel session persistence (True or False). Default = False
     (EG_KERNEL_SESSION_PERSISTENCE env var)
+--FileKernelSessionManager.persistence_root=<Unicode>
+    Default: ''
+    Identifies the root 'directory' under which the 'kernel_sessions' node will
+    reside.  This directory should exist.  (EG_PERSISTENCE_ROOT env var)
 
-NotebookHTTPPersonality options
--------------------------------
---NotebookHTTPPersonality.allow_notebook_download=<Bool>
-    Default: False
-    Optional API to download the notebook source code in notebook-http mode,
-    defaults to not allow
---NotebookHTTPPersonality.cell_parser=<Unicode>
-    Default: 'kernel_gateway.notebook_http.cell.parser'
-    Determines which module is used to parse the notebook for endpoints and
-    documentation. Valid module names include
-    'kernel_gateway.notebook_http.cell.parser' and
-    'kernel_gateway.notebook_http.swagger.parser'. (KG_CELL_PARSER env var)
---NotebookHTTPPersonality.comment_prefix=<Dict>
-    Default: {None: '#', 'scala': '//'}
-    Maps kernel language to code comment syntax
---NotebookHTTPPersonality.static_path=<Unicode>
-    Default: None
-    Serve static files on disk in the given path as /public, defaults to not
-    serve
-
-JupyterWebsocketPersonality options
------------------------------------
---JupyterWebsocketPersonality.env_whitelist=<List>
+RemoteMappingKernelManager options
+----------------------------------
+--RemoteMappingKernelManager.allowed_message_types=<List>
     Default: []
-    Environment variables allowed to be set when a client requests a new kernel
---JupyterWebsocketPersonality.list_kernels=<Bool>
+    White list of allowed kernel message types. When the list is empty, all
+    message types are allowed.
+--RemoteMappingKernelManager.buffer_offline_messages=<Bool>
+    Default: True
+    Whether messages from kernels whose frontends have disconnected should be
+    buffered in-memory.
+    When True (default), messages are buffered and replayed on reconnect,
+    avoiding lost messages due to interrupted connectivity.
+    Disable if long-running kernels will produce too much output while no
+    frontends are connected.
+--RemoteMappingKernelManager.cull_busy=<Bool>
     Default: False
-    Permits listing of the running kernels using API endpoints /api/kernels and
-    /api/sessions (KG_LIST_KERNELS env var). Note: Jupyter Notebook allows this
-    by default but kernel gateway does not.
+    Whether to consider culling kernels which are busy. Only effective if
+    cull_idle_timeout > 0.
+--RemoteMappingKernelManager.cull_connected=<Bool>
+    Default: False
+    Whether to consider culling kernels which have one or more connections. Only
+    effective if cull_idle_timeout > 0.
+--RemoteMappingKernelManager.cull_idle_timeout=<Int>
+    Default: 0
+    Timeout (in seconds) after which a kernel is considered idle and ready to be
+    culled. Values of 0 or lower disable culling. Very short timeouts may result
+    in kernels being culled for users with poor network connections.
+--RemoteMappingKernelManager.cull_interval=<Int>
+    Default: 300
+    The interval (in seconds) on which to check for idle kernels exceeding the
+    cull timeout value.
+--RemoteMappingKernelManager.default_kernel_name=<Unicode>
+    Default: 'python3'
+    The name of the default kernel to start
+--RemoteMappingKernelManager.kernel_info_timeout=<Float>
+    Default: 60
+    Timeout for giving up on a kernel (in seconds).
+    On starting and restarting kernels, we check whether the kernel is running
+    and responsive by sending kernel_info_requests. This sets the timeout in
+    seconds for how long the kernel can take before being presumed dead. This
+    affects the MappingKernelManager (which handles kernel restarts) and the
+    ZMQChannelsHandler (which handles the startup).
+--RemoteMappingKernelManager.kernel_manager_class=<DottedObjectName>
+    Default: 'jupyter_client.ioloop.IOLoopKernelManager'
+    The kernel manager class.  This is configurable to allow subclassing of the
+    KernelManager for customized behavior.
+--RemoteMappingKernelManager.root_dir=<Unicode>
+    Default: ''
+
 ```
 
 ### Addtional supported environment variables
+The following environment variables can be used to influence functionality and are not tied to command-line options:
 ```text
   EG_DEFAULT_KERNEL_SERVICE_ACCOUNT_NAME=default
     Kubernetes only.  This value indicates the default service account name to use for
@@ -392,6 +414,7 @@ JupyterWebsocketPersonality options
     Attempts to launch a kernel where KERNEL_UID's value is in this list will result
     in an exception indicating error 403 (Forbidden).  See also EG_GID_BLACKLIST.
 ```
+### Environment variables that assist in troubleshooting
 The following environment variables may be useful for troubleshooting:
 ```text
   EG_DOCKER_LOG_LEVEL=WARNING
@@ -438,8 +461,8 @@ The following environment variables may be useful for troubleshooting:
     By default, the yarn-api-client library is too verbose for its logging.  This
     value can be adjusted in situations where YARN troubleshooting may be warranted.
 ```
-
-The following environment variables are managed by Enterprise Gateway and listed here for completeness.  Warning: Setting these variables manually could adversely affect operations.
+### System-owned environment variables
+The following environment variables are managed by Enterprise Gateway and listed here for completeness.  WARNING: Manually setting these variables could adversely affect operations.
 ```text
   EG_DOCKER_MODE
     Docker only.  Used by launch_docker.py to determine if the kernel container
@@ -623,3 +646,31 @@ The following kernel-specific environment variables are managed within Enterpris
     launch script the mode of Spark context intiatilization it should apply when
     starting the spark-based kernel container.
 ```
+### Dynamic Configurables
+Enterprise Gateway now supports the ability to update configuration variables without having to
+restart Enterprise Gateway.  This enables the ability to do things like enable debug logging or 
+adjust the maximum number of kernels per user, all without having to restart Enterprise Gateway.
+
+To enable dynamic configurables configure `EnterpriseGatewayApp.dynamic_config_interval` to a
+positive value (default is 0 or disabled).  Since this is the number of seconds to poll Enterprise Gateway's configuration files,
+a value greater than 60 (1 minute) is recommended.  This functionality works for most configuration 
+values, but does have the following caveats:
+1. Any configuration variables set on the command line (CLI) or via environment variables are
+NOT eligible for dynamic updates.  This is because Jupyter gives those values priority over
+file-based configuration variables.
+2. Any configuration variables tied to background processing may not reflect their update if
+the variable is not *observed* for changes.  For example, the code behind 
+`MappingKernelManager.cull_idle_timeout` may not reflect changes to the timeout period if 
+that variable is not monitored (i.e., observed) for changes.
+3. Only `Configurables` registered by Enterprise Gateway are eligible for dynamic updates.
+Currently, that list consists of the following (and their subclasses): EnterpriseGatewayApp, 
+MappingKernelManager, KernelSpecManager, and KernelSessionManager.
+
+As a result, administrators are encouraged to configure Enterprise Gateway via configuration
+files with only static values configured via the command line or environment.
+
+Note that if `EnterpriseGatewayApp.dynamic_config_interval` is configured with a positive value
+via the configuration file (i.e., is eligible for updates) and is subsequently set to 0, then
+dynamic configuration updates will be disabled until Enterprise Gateway is restarted with a 
+positive value.  Therefore, we recommend `EnterpriseGatewayApp.dynamic_config_interval` be 
+configured via the command line or environment.

@@ -7,10 +7,11 @@ import signal
 import re
 import uuid
 
-from tornado import gen
+from tornado import gen, web
 from ipython_genutils.py3compat import unicode_type
 from ipython_genutils.importstring import import_item
-from kernel_gateway.services.kernels.manager import SeedingMappingKernelManager, KernelGatewayIOLoopKernelManager
+from notebook.services.kernels.kernelmanager import MappingKernelManager
+from jupyter_client.ioloop.manager import IOLoopKernelManager
 from enterprise_gateway.services.sessions.statsd_client import Statsd
 
 from ..processproxies.processproxy import LocalProcessProxy, RemoteProcessProxy
@@ -44,12 +45,23 @@ def get_process_proxy_config(kernelspec):
     return {"class_name": "enterprise_gateway.services.processproxies.processproxy.LocalProcessProxy", "config": {}}
 
 
-class RemoteMappingKernelManager(SeedingMappingKernelManager):
-    """Extends the SeedingMappingKernelManager with support for managing remote kernels via the process-proxy. """
+class RemoteMappingKernelManager(MappingKernelManager):
+    """Extends the MappingKernelManager with support for managing remote kernels via the process-proxy. """
     statsd = Statsd.getClient()
 
     def _kernel_manager_class_default(self):
         return 'enterprise_gateway.services.kernels.remotemanager.RemoteKernelManager'
+
+    def check_kernel_id(self, kernel_id):
+        """Check that a kernel_id exists and raise 404 if not."""
+        if kernel_id not in self:
+            if not self._refresh_kernel(kernel_id):
+                self.parent.kernel_session_manager.delete_session(kernel_id)
+                raise web.HTTPError(404, u'Kernel does not exist: %s' % kernel_id)
+
+    def _refresh_kernel(self, kernel_id):
+        self.parent.kernel_session_manager.load_session(kernel_id)
+        return self.parent.kernel_session_manager.start_session(kernel_id)
 
     @statsd.timer('StartKernelTimer')
     @gen.coroutine
@@ -145,7 +157,7 @@ class RemoteMappingKernelManager(SeedingMappingKernelManager):
         self.start_watching_activity(kernel_id)
         self.add_restart_callback(kernel_id,
                                   lambda: self._handle_kernel_died(kernel_id),
-                                  'dead',)
+                                  'dead', )
         # Only initialize culling if available.  Warning message will be issued in gatewayapp at startup.
         func = getattr(self, 'initialize_culler', None)
         if func:
@@ -170,7 +182,7 @@ class RemoteMappingKernelManager(SeedingMappingKernelManager):
             The uuid string to associate with the new kernel
         """
         env = kwargs.get('env')
-        if env and env.get('KERNEL_ID'):   # If there's a KERNEL_ID in the env, check it out
+        if env and env.get('KERNEL_ID'):  # If there's a KERNEL_ID in the env, check it out
             # convert string back to UUID - validating string in the process.
             str_kernel_id = env.get('KERNEL_ID')
             try:
@@ -190,8 +202,8 @@ class RemoteMappingKernelManager(SeedingMappingKernelManager):
         return kernel_id
 
 
-class RemoteKernelManager(KernelGatewayIOLoopKernelManager):
-    """Extends the KernelGatewayIOLoopKernelManager used by the RemoteMappingKernelManager.
+class RemoteKernelManager(IOLoopKernelManager):
+    """Extends the IOLoopKernelManager used by the MappingKernelManager.
 
     This class is responsible for detecting that a remote kernel is desired, then launching the
     appropriate class (previously pulled from the kernel spec).  The process 'proxy' is
@@ -199,7 +211,7 @@ class RemoteKernelManager(KernelGatewayIOLoopKernelManager):
     """
 
     def __init__(self, **kwargs):
-        super(KernelGatewayIOLoopKernelManager, self).__init__(**kwargs)
+        super(RemoteKernelManager, self).__init__(**kwargs)
         self.process_proxy = None
         self.response_address = None
         self.sigint_value = None
@@ -237,9 +249,9 @@ class RemoteKernelManager(KernelGatewayIOLoopKernelManager):
         """
         env = kwargs.get('env', {})
         self.user_overrides.update({key: value for key, value in env.items()
-                                   if key.startswith('KERNEL_') or
+                                    if key.startswith('KERNEL_') or
                                     key in self.parent.parent.env_process_whitelist or
-                                    key in self.parent.parent.personality.env_whitelist})
+                                    key in self.parent.parent.env_whitelist})
 
     def format_kernel_cmd(self, extra_arguments=None):
         """ Replace templated args (e.g. {response_address}, {port_range}, or {kernel_id}). """
@@ -271,11 +283,13 @@ class RemoteKernelManager(KernelGatewayIOLoopKernelManager):
         env = kwargs['env']
 
         # Apply user_overrides to enable defaulting behavior from kernelspec.env stanza.  Note that we do this
-        # BEFORE setting KERNEL_GATEWAY and removing KG_AUTH_TOKEN so those operations cannot be overridden.
+        # BEFORE setting KERNEL_GATEWAY and removing {EG,KG}_AUTH_TOKEN so those operations cannot be overridden.
         env.update(self.user_overrides)
 
-        # Since we can't call the _launch_kernel in KernelGateway - replicate its functionality here.
+        # No longer using Kernel Gateway, but retain references of B/C purposes
         env['KERNEL_GATEWAY'] = '1'
+        if 'EG_AUTH_TOKEN' in env:
+            del env['EG_AUTH_TOKEN']
         if 'KG_AUTH_TOKEN' in env:
             del env['KG_AUTH_TOKEN']
 
@@ -354,8 +368,8 @@ class RemoteKernelManager(KernelGatewayIOLoopKernelManager):
                             else:  # Python 3
                                 self.sigint_value = sig_value.value
                             self.log.debug(
-                                "Converted EG_ALTERNATE_SIGINT '{}' to value '{}' to use as interrupt signal.".
-                                format(alt_sigint, self.sigint_value))
+                                "Converted EG_ALTERNATE_SIGINT '{}' to value '{}' to use as interrupt signal.".format(
+                                    alt_sigint, self.sigint_value))
                         except AttributeError:
                             self.log.warning("Error received when attempting to convert EG_ALTERNATE_SIGINT of "
                                              "'{}' to a value. Check kernelspec entry for kernel '{}' - using "
