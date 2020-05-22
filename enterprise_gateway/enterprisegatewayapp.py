@@ -31,6 +31,12 @@ from notebook.services.kernels.kernelmanager import MappingKernelManager
 from notebook.notebookapp import random_ports
 from notebook.utils import url_path_join
 
+try:
+    import resource
+except ImportError:
+    # Windows
+    resource = None
+
 from ._version import __version__
 
 from .base.handlers import default_handlers as default_base_handlers
@@ -53,7 +59,8 @@ aliases.update({
     'port_retries': 'EnterpriseGatewayApp.port_retries',
     'keyfile': 'EnterpriseGatewayApp.keyfile',
     'certfile': 'EnterpriseGatewayApp.certfile',
-    'client-ca': 'EnterpriseGatewayApp.client_ca'
+    'client-ca': 'EnterpriseGatewayApp.client_ca',
+    'min_open_files_limit': 'EnterpriseGatewayApp.min_open_files_limit'
 })
 
 
@@ -86,9 +93,33 @@ class EnterpriseGatewayApp(JupyterApp):
     port = Integer(port_default_value, config=True,
                    help='Port on which to listen (EG_PORT env var)')
 
+    min_open_files_limit = Integer(config=True,
+                                   help="""
+                Gets or sets a lower bound on the open file handles process resource
+                limit. This may need to be increased if you run into an
+                OSError: [Errno 24] Too many open files.
+                This is not applicable when running on Windows.
+                """)
+
     @default('port')
     def port_default(self):
         return int(os.getenv(self.port_env, os.getenv('KG_PORT', self.port_default_value)))
+
+    @default('min_open_files_limit')
+    def min_open_files_limit_default(self):
+        if resource is None:
+            # Ignoring min_open_files_limit because the limit cannot be adjusted (for example, on Windows)
+            return None
+
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+
+        DEFAULT_SOFT = 4096
+        if hard >= DEFAULT_SOFT:
+            return DEFAULT_SOFT
+
+        self.log.debug("Default value for min_open_files_limit is ignored (hard=%r, soft=%r)", hard, soft)
+
+        return soft
 
     port_retries_env = 'EG_PORT_RETRIES'
     port_retries_default_value = 50
@@ -470,9 +501,28 @@ class EnterpriseGatewayApp(JupyterApp):
             Command line arguments
         """
         super(EnterpriseGatewayApp, self).initialize(argv)
+        self.init_resources()
         self.init_configurables()
         self.init_webapp()
         self.init_http_server()
+
+    def init_resources(self):
+        """initialize system resources"""
+        if resource is None:
+            self.log.debug(
+                'Ignoring min_open_files_limit because the limit cannot be adjusted (for example, on Windows)')
+            return
+
+        old_soft, old_hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        soft = self.min_open_files_limit
+        hard = old_hard
+        if old_soft < soft:
+            if hard < soft:
+                hard = soft
+            self.log.debug(
+                'Raising open file limit: soft {}->{}; hard {}->{}'.format(old_soft, soft, old_hard, hard)
+            )
+            resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
 
     def init_configurables(self):
         """Initializes all configurable objects including a kernel manager, kernel
