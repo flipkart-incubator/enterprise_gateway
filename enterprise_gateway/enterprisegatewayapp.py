@@ -430,6 +430,14 @@ class EnterpriseGatewayApp(JupyterApp):
     def ws_ping_interval_default(self):
         return int(os.getenv(self.ws_ping_interval_env, self.ws_ping_interval_default_value))
 
+    ws_ping_timeout_env = 'EG_WS_PING_TIMEOUT_SECS'
+    ws_ping_timeout_default_value = 60
+    ws_ping_timeout = Integer(ws_ping_timeout_default_value, config=True)
+
+    @default('ws_ping_timeout')
+    def ws_ping_timeout_default(self):
+        return int(os.getenv(self.ws_ping_timeout_env, self.ws_ping_timeout_default_value))
+
     # Dynamic Update Interval
     dynamic_config_interval_env = 'EG_DYNAMIC_CONFIG_INTERVAL'
     dynamic_config_interval_default_value = 0
@@ -630,7 +638,8 @@ class EnterpriseGatewayApp(JupyterApp):
             allow_remote_access=True,
             # setting ws_ping_interval value that can allow it to be modified for the purpose of toggling ping mechanism
             # for zmq web-sockets or increasing/decreasing web socket ping interval/timeouts.
-            ws_ping_interval=self.ws_ping_interval * 1000
+            ws_ping_interval=self.ws_ping_interval * 1000,
+            ws_ping_timeout= self.ws_ping_timeout * 1000
         )
 
     def _build_ssl_options(self):
