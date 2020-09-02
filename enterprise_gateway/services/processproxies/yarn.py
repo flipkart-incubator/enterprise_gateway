@@ -153,7 +153,7 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
             return
 
         # else the resources may or may not be available now. it may be possible that if we wait then the resources
-        # become available. start  a timeout process
+        # become available. start a timeout process
 
         self.start_time = RemoteProcessProxy.get_current_time()
         self.candidate_queue = self.resource_mgr.cluster_scheduler_queue(candidate_queue_name)
@@ -469,3 +469,57 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
                              format(app_id, e))
 
         return response
+
+    def _check_resource(self):
+        self.
+        response = self._rm.cluster_nodes(states=["RUNNING"])
+        content = response.data
+
+        available_resources = []
+        for node in content["nodes"]["node"]:
+            resource = {}
+            for resource_info in node["availableResource"]["resourceInformations"]["resourceInformation"]:
+                if resource_info['name'] == "yarn.io/gpu":
+                    resource['gpu'] = int(resource_info['value'])
+                elif resource_info['name'] == "memory-mb":
+                    resource['memory-mb'] = int(resource_info['value'])
+                elif resource_info['name'] == "vcores":
+                    resource['vcores'] = int(resource_info['value'])
+
+            available_resources.append(resource)
+
+        is_available = False
+        max_gpu = None
+        max_memory_mb = None
+        max_cores = None
+
+        for resource in available_resources:
+            if resource['gpu'] >= gpu:
+                if resource['memory-mb'] >= memory_mb:
+                    if resource['vcores'] >= cores:
+                        is_available = True
+                        break
+                    else:
+                        max_cores = resource['vcores'] if max_cores is None else max(resource['vcores'], max_cores)
+                else:
+                    max_memory_mb = resource['memory-mb'] if max_memory_mb is None else max(resource['memory-mb'],
+                                                                                            max_memory_mb)
+            else:
+                max_gpu = resource['gpu'] if max_gpu is None else max(resource['gpu'], max_gpu)
+
+        max_resources = {}
+        if not is_available:
+            if max_cores is not None:
+                max_resources["cores"] = max_cores
+                return False, max_resources
+
+            elif max_memory_mb is not None:
+                max_resources["memory_mb"] = max_memory_mb
+                return False, max_resources
+
+            elif max_gpu is not None:
+                max_resources["gpu"] = max_gpu
+                return False, max_resources
+
+        else:
+            return True, max_resources
