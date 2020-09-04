@@ -33,8 +33,6 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
         super(YarnClusterProcessProxy, self).__init__(kernel_manager, proxy_config)
         self.application_id = None
         self.last_known_state = None
-        self.candidate_queue = None
-        self.candidate_partition = None
         self.local_proc = None
         self.pid = None
         self.ip = None
@@ -86,7 +84,7 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
 
         # checks to see if the queue resource is available
         # if not available, kernel startup is not attempted
-        self.confirm_yarn_queue_availability(**kwargs)
+        self.check_kernel_startup_and_driver_resource_availability(**kwargs)
 
         super(YarnClusterProcessProxy, self).launch_process(kernel_cmd, **kwargs)
 
@@ -101,87 +99,81 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
 
         return self
 
-    def confirm_yarn_queue_availability(self, **kwargs):
+    def check_kernel_startup_and_driver_resource_availability(self, **kwargs):
         """
+        OLD METHOD NAME: confirm_yarn_queue_availability
+
         Submitting jobs to yarn queue and then checking till the jobs are in running state
         will lead to orphan jobs being created in some scenarios.
 
         We take kernel_launch_timeout time and divide this into two parts.
-        If the queue is unavailable we take max 20% of the time to poll the queue periodically
-        and if the queue becomes available the rest of timeout is met in 80% of the remaining
-        time.
+        Max 20% of the time is taken to poll periodically for kernel startup resource availability and
+        kernel driver resources availability.
+        If both these become available, the rest of the timeout is met in the remaining time which is
+        min 80% of the kernel_launch_timeout time.
 
         This algorithm is subject to change. Please read the below cases to understand
         when and how checks are applied.
 
-        Confirms if the yarn queue has capacity to handle the resource requests that
-        will be sent to it.
+        (i) First, current version of check takes into consideration node label partitioning on given queues.
+        Provided the queue name and node label this checks if the given partition has capacity available
+        for kernel startup. This checks if the queue's absolute used capacity for that partition is below
+        a threshold value (default 95%)
 
-        First check ensures the driver and executor memory request falls within
-        the container size of yarn configuration. This check requires executor and
-        driver memory to be available in the env.
+        (ii) Second check assumes that the absolute max capacity that the given queue can use
+        of the given partition is 100%. Consequently, it checks all the nodes of the given partition for
+        the availability of three resources:
+        KERNEL_DRIVER_MEMORY, KERNEL_DRIVER_CORES and KERNEL_DRIVER_GPU.
 
-        Second,Current version of check, takes into consideration node label partitioning
-        on given queues. Provided the queue name and node label this checks if
-        the given partition has capacity available for kernel startup.
+        All Checks are optional and are only performed if we have KERNEL_QUEUE and KERNEL_NODE_LABEL
+        specified as env variables.
 
-        All Checks are optional. If we have KERNEL_EXECUTOR_MEMORY and KERNEL_DRIVER_MEMORY
-        specified, first check is performed.
-
-        If we have KERNEL_QUEUE and KERNEL_NODE_LABEL specified, second check is performed.
-
-        Proper error messages are sent back for user experience
-        :param kwargs:
+        Proper error messages are sent back for good user experience.
+        :param kwargs: same as launch process kwargs.
         :return:
         """
+
         env_dict = kwargs.get('env', {})
-
-        driver_memory = int(env_dict.get('KERNEL_DRIVER_MEMORY', 0))
-        # executor_memory = int(env_dict.get('KERNEL_EXECUTOR_MEMORY', 0))
-
-        driver_cpu = int(env_dict.get('KERNEL_DRIVER_CORES', 0))
-        # executor_cpu = int(env_dict.get('KERNEL_EXECUTOR_CORES', 0))
-
-        driver_gpu = int(env_dict.get('KERNEL_DRIVER_GPU', 0))
-
-        # if executor_memory * driver_memory > 0:
-        #     container_memory = self.resource_mgr.cluster_node_container_memory()
-        #     if max(executor_memory, driver_memory) > container_memory:
-        #         self.log_and_raise(http_status_code=500,
-        #                            reason="Container Memory not sufficient for a executor/driver allocation")
 
         candidate_queue_name = (env_dict.get('KERNEL_QUEUE', None))
         node_label = env_dict.get('KERNEL_NODE_LABEL', None)
-        partition_availability_threshold = float(env_dict.get('YARN_PARTITION_THRESHOLD', 95.0))
 
         if candidate_queue_name is None or node_label is None:
             return
 
-        # else the resources may or may not be available now. it may be possible that if we wait then the resources
-        # become available. start a timeout process
+        partition_availability_threshold = float(env_dict.get('YARN_PARTITION_THRESHOLD', 95.0))
+
+        driver_memory = int(env_dict.get('KERNEL_DRIVER_MEMORY', 0))
+        driver_cpu = int(env_dict.get('KERNEL_DRIVER_CORES', 0))
+        driver_gpu = int(env_dict.get('KERNEL_DRIVER_GPU', 0))
+
+        # The resources may or may not be available now. It may be possible that if we wait then the resources
+        # become available. Start a timeout process
 
         self.start_time = RemoteProcessProxy.get_current_time()
-        self.candidate_queue = self.resource_mgr.cluster_scheduler_queue(candidate_queue_name)
+        candidate_queue = self.resource_mgr.cluster_scheduler_queue(candidate_queue_name)
 
-        if self.candidate_queue is None:
+        if candidate_queue is None:
             self.log.warning("Queue: {} not found in cluster."
                              "Availability check will not be performed".format(candidate_queue_name))
             return
 
-        self.candidate_partition = self.resource_mgr.cluster_queue_partition(self.candidate_queue, node_label)
+        candidate_partition = self.resource_mgr.cluster_queue_partition(candidate_queue, node_label)
 
-        if self.candidate_partition is None:
+        if candidate_partition is None:
             self.log.debug("Partition: {} not found in {} queue."
                            "Availability check will not be performed".format(node_label, candidate_queue_name))
             return
 
-        self.log.debug("Checking endpoint: {} if partition: {} "
-                       "has used capacity <= {}%".format(self.resource_mgr.get_active_endpoint(),
-                                                         self.candidate_partition, partition_availability_threshold))
+        self.log.debug("Checking endpoint: {} if queue {} has used capacity <= {}% for the partition: {} "
+                       .format(self.resource_mgr.get_active_endpoint(), candidate_queue_name,
+                               partition_availability_threshold, node_label))
 
-        queue_available = self.resource_mgr.cluster_scheduler_queue_availability(self.candidate_partition,
+        queue_available = self.resource_mgr.cluster_scheduler_queue_availability(candidate_partition,
                                                                                  partition_availability_threshold)
-        node_available = self._check_resource(driver_gpu, driver_memory, driver_cpu, node_label)
+        node_available = False
+        if queue_available:
+            node_available = self._check_resource(driver_gpu, driver_memory, driver_cpu, node_label)
 
         yarn_available = queue_available and node_available
 
@@ -192,16 +184,18 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
             while not yarn_available:
                 self.handle_yarn_queue_timeout()
 
-                self.candidate_queue = self.resource_mgr.cluster_scheduler_queue(candidate_queue_name)
-                self.candidate_partition = self.resource_mgr.cluster_queue_partition(self.candidate_queue, node_label)
+                candidate_queue = self.resource_mgr.cluster_scheduler_queue(candidate_queue_name)
+                candidate_partition = self.resource_mgr.cluster_queue_partition(candidate_queue, node_label)
 
-                queue_available = self.resource_mgr.cluster_scheduler_queue_availability(self.candidate_partition,
-                                                                                         partition_availability_threshold)
-                node_available = self._check_resource(driver_gpu, driver_memory, driver_cpu, node_label)
+                queue_available = \
+                    self.resource_mgr.cluster_scheduler_queue_availability(candidate_partition,
+                                                                           partition_availability_threshold)
+                if queue_available:
+                    node_available = self._check_resource(driver_gpu, driver_memory, driver_cpu, node_label)
 
                 yarn_available = queue_available and node_available
 
-        # subtracting the total amount of time spent for polling for queue availability
+        # subtracting the total amount of time spent for polling for resource availability
         self.kernel_launch_timeout -= RemoteProcessProxy.get_time_diff(self.start_time,
                                                                        RemoteProcessProxy.get_current_time())
 
@@ -212,7 +206,7 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
 
         if time_interval > self.yarn_resource_check_wait_time:
             error_http_code = 500
-            reason = "Yarn Compute Resource is unavailable after {} seconds".format(self.yarn_resource_check_wait_time)
+            reason = "Yarn Compute Resources are unavailable after {} secs.".format(self.yarn_resource_check_wait_time)
             self.log_and_raise(http_status_code=error_http_code, reason=reason)
 
     def poll(self):
