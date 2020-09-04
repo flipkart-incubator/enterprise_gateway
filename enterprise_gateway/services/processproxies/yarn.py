@@ -136,14 +136,19 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
         """
         env_dict = kwargs.get('env', {})
 
-        executor_memory = int(env_dict.get('KERNEL_EXECUTOR_MEMORY', 0))
         driver_memory = int(env_dict.get('KERNEL_DRIVER_MEMORY', 0))
+        # executor_memory = int(env_dict.get('KERNEL_EXECUTOR_MEMORY', 0))
 
-        if executor_memory * driver_memory > 0:
-            container_memory = self.resource_mgr.cluster_node_container_memory()
-            if max(executor_memory, driver_memory) > container_memory:
-                self.log_and_raise(http_status_code=500,
-                                   reason="Container Memory not sufficient for a executor/driver allocation")
+        driver_cpu = int(env_dict.get('KERNEL_DRIVER_CORES', 0))
+        # executor_cpu = int(env_dict.get('KERNEL_EXECUTOR_CORES', 0))
+
+        driver_gpu = int(env_dict.get('KERNEL_DRIVER_GPU', 0))
+
+        # if executor_memory * driver_memory > 0:
+        #     container_memory = self.resource_mgr.cluster_node_container_memory()
+        #     if max(executor_memory, driver_memory) > container_memory:
+        #         self.log_and_raise(http_status_code=500,
+        #                            reason="Container Memory not sufficient for a executor/driver allocation")
 
         candidate_queue_name = (env_dict.get('KERNEL_QUEUE', None))
         node_label = env_dict.get('KERNEL_NODE_LABEL', None)
@@ -171,18 +176,30 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
             return
 
         self.log.debug("Checking endpoint: {} if partition: {} "
-                       "has used capacity <= {}%".format(self.yarn_endpoint,
+                       "has used capacity <= {}%".format(self.resource_mgr.get_active_endpoint(),
                                                          self.candidate_partition, partition_availability_threshold))
 
-        yarn_available = self.resource_mgr.cluster_scheduler_queue_availability(self.candidate_partition,
-                                                                                partition_availability_threshold)
+        queue_available = self.resource_mgr.cluster_scheduler_queue_availability(self.candidate_partition,
+                                                                                 partition_availability_threshold)
+        node_available = self._check_resource(driver_gpu, driver_memory, driver_cpu, node_label)
+
+        yarn_available = queue_available and node_available
+
         if not yarn_available:
             self.log.debug(
                 "Retrying for {} ms since resources are not available".format(self.yarn_resource_check_wait_time))
+
             while not yarn_available:
                 self.handle_yarn_queue_timeout()
-                yarn_available = self.resource_mgr.cluster_scheduler_queue_availability(
-                    self.candidate_partition, partition_availability_threshold)
+
+                self.candidate_queue = self.resource_mgr.cluster_scheduler_queue(candidate_queue_name)
+                self.candidate_partition = self.resource_mgr.cluster_queue_partition(self.candidate_queue, node_label)
+
+                queue_available = self.resource_mgr.cluster_scheduler_queue_availability(self.candidate_partition,
+                                                                                         partition_availability_threshold)
+                node_available = self._check_resource(driver_gpu, driver_memory, driver_cpu, node_label)
+
+                yarn_available = queue_available and node_available
 
         # subtracting the total amount of time spent for polling for queue availability
         self.kernel_launch_timeout -= RemoteProcessProxy.get_time_diff(self.start_time,
@@ -470,56 +487,30 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
 
         return response
 
-    def _check_resource(self):
-        self.
-        response = self._rm.cluster_nodes(states=["RUNNING"])
+    def _check_resource(self, gpu, memory_mb, cores, node_label):
+
+        response = self.resource_mgr.cluster_nodes(states=["RUNNING"])
         content = response.data
 
-        available_resources = []
         for node in content["nodes"]["node"]:
-            resource = {}
-            for resource_info in node["availableResource"]["resourceInformations"]["resourceInformation"]:
-                if resource_info['name'] == "yarn.io/gpu":
-                    resource['gpu'] = int(resource_info['value'])
-                elif resource_info['name'] == "memory-mb":
-                    resource['memory-mb'] = int(resource_info['value'])
-                elif resource_info['name'] == "vcores":
-                    resource['vcores'] = int(resource_info['value'])
+            if node_label in node["nodeLabels"]:
+                resource_flag = True
+                for resource_info in node["availableResource"]["resourceInformations"]["resourceInformation"]:
+                    if resource_info['name'] == "memory-mb":
+                        if int(resource_info['value']) < memory_mb:
+                            resource_flag = False
+                            break
+                    elif resource_info['name'] == "vcores":
+                        if int(resource_info['value']) < cores:
+                            resource_flag = False
+                            break
+                    elif resource_info['name'] == "yarn.io/gpu":
+                        if int(resource_info['value']) < gpu:
+                            resource_flag = False
+                            break
 
-            available_resources.append(resource)
+                if resource_flag:
+                    return True
 
-        is_available = False
-        max_gpu = None
-        max_memory_mb = None
-        max_cores = None
+        return False
 
-        for resource in available_resources:
-            if resource['gpu'] >= gpu:
-                if resource['memory-mb'] >= memory_mb:
-                    if resource['vcores'] >= cores:
-                        is_available = True
-                        break
-                    else:
-                        max_cores = resource['vcores'] if max_cores is None else max(resource['vcores'], max_cores)
-                else:
-                    max_memory_mb = resource['memory-mb'] if max_memory_mb is None else max(resource['memory-mb'],
-                                                                                            max_memory_mb)
-            else:
-                max_gpu = resource['gpu'] if max_gpu is None else max(resource['gpu'], max_gpu)
-
-        max_resources = {}
-        if not is_available:
-            if max_cores is not None:
-                max_resources["cores"] = max_cores
-                return False, max_resources
-
-            elif max_memory_mb is not None:
-                max_resources["memory_mb"] = max_memory_mb
-                return False, max_resources
-
-            elif max_gpu is not None:
-                max_resources["gpu"] = max_gpu
-                return False, max_resources
-
-        else:
-            return True, max_resources
