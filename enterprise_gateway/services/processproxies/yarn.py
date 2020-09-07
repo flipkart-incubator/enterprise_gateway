@@ -127,6 +127,7 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
 
         All Checks are optional and are only performed if we have KERNEL_QUEUE and KERNEL_NODE_LABEL
         specified as env variables.
+        First check can be further disabled by passing YARN_PARTITION_THRESHOLD value as -1.
 
         Proper error messages are sent back for good user experience.
         :param kwargs: same as launch process kwargs.
@@ -558,13 +559,10 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
         if not is_available:
             if is_cores:
                 return False, "cores"
-
             elif is_memory_mb:
                 return False, "memory_mb"
-
             elif is_gpu:
                 return False, "gpu"
-
         else:
             return True, None
 
