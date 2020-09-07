@@ -204,11 +204,8 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
 
         finally:
             # subtracting the total amount of time spent for polling for resource availability
-            self.update_kernel_launch_timeout()
-
-    def update_kernel_launch_timeout(self):
-        self.kernel_launch_timeout -= RemoteProcessProxy.get_time_diff(self.start_time,
-                                                                       RemoteProcessProxy.get_current_time())
+            self.kernel_launch_timeout -= RemoteProcessProxy.get_time_diff(self.start_time,
+                                                                           RemoteProcessProxy.get_current_time())
 
     def handle_yarn_queue_timeout(self, queue_available, resource):
 
