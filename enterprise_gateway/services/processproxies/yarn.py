@@ -218,7 +218,7 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
                 reason = "Yarn Compute Resources for kernel startup are unavailable after {} secs.".format(
                     self.yarn_resource_check_wait_time)
             else:
-                reason = "The following Yarn compute resource is unavailable: '{}' after {} secs".format(
+                reason = "The following Yarn compute resource: 'Driver {}' is unavailable after {} secs".format(
                     resource, self.yarn_resource_check_wait_time)
             self.log_and_raise(http_status_code=error_http_code, reason=reason)
 
@@ -537,31 +537,25 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
             self.log.warning("No running node found with the given partition name/ node label: {}.".format(node_label))
             return None, None
 
-        is_available = False
-        is_gpu = False
-        is_memory_mb = False
-        is_cores = False
+        no_gpu = False
+        no_memory_mb = False
+        no_cores = False
 
         for resource in available_resources:
             if resource['gpu'] >= gpu:
                 if resource['memory-mb'] >= memory_mb:
                     if resource['vcores'] >= cores:
-                        is_available = True
-                        break
+                        return True, None
                     else:
-                        is_cores = True
+                        no_cores = True
                 else:
-                    is_memory_mb = True
+                    no_memory_mb = True
             else:
-                is_gpu = True
+                no_gpu = True
 
-        if not is_available:
-            if is_cores:
-                return False, "cores"
-            elif is_memory_mb:
-                return False, "memory_mb"
-            elif is_gpu:
-                return False, "gpu"
-        else:
-            return True, None
-
+        if no_cores:
+            return False, "CPU Cores"
+        elif no_memory_mb:
+            return False, "Memory mb"
+        elif no_gpu:
+            return False, "GPU"
