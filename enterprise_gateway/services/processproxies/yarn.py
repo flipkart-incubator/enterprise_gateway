@@ -137,6 +137,8 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
         warning_msg = "Availability check will not be performed"
         try:
             env_dict = kwargs.get('env', {})
+            if env_dict.get('KERNEL_LAUNCH_TIMEOUT'):
+                self.yarn_resource_check_wait_time = 0.20 * float(env_dict.get('KERNEL_LAUNCH_TIMEOUT'))
 
             candidate_queue_name = (env_dict.get('KERNEL_QUEUE', None))
             node_label = env_dict.get('KERNEL_NODE_LABEL', None)
@@ -157,47 +159,33 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
 
             queue_available = False
             node_available = False
+            yarn_available = False
 
             # disable queue partition availability check if partition availability threshold value is -1.
             if partition_availability_threshold == -1:
                 queue_available = True
 
-            if not queue_available:
-                queue_available = self._check_queue_partition_usage(candidate_queue_name, node_label,
-                                                                    partition_availability_threshold)
-                if queue_available is None:
-                    self.log.warning(warning_msg)
-                    return
+            self.log.info("Waiting for resource availability for maximum {} seconds."
+                          .format(self.yarn_resource_check_wait_time))
 
-            if queue_available:
-                node_available, resource = self._check_resource(driver_gpu, driver_memory, driver_cpu, node_label)
-                if node_available is None:
-                    self.log.warning(warning_msg)
-                    return
+            while not yarn_available:
+                if not queue_available:
+                    queue_available = self._check_queue_partition_usage(candidate_queue_name, node_label,
+                                                                        partition_availability_threshold)
+                    if queue_available is None:
+                        self.log.warning(warning_msg)
+                        return
 
-            yarn_available = queue_available and node_available
+                if queue_available:
+                    node_available, resource = self._check_resource(driver_gpu, driver_memory, driver_cpu, node_label)
+                    if node_available is None:
+                        self.log.warning(warning_msg)
+                        return
 
-            if not yarn_available:
-                self.log.debug(
-                    "Retrying for {} ms since resources are not available".format(self.yarn_resource_check_wait_time))
+                yarn_available = queue_available and node_available
 
-                while not yarn_available:
+                if not yarn_available:
                     self.handle_yarn_queue_timeout(queue_available, node_available)
-
-                    if not queue_available:
-                        queue_available = self._check_queue_partition_usage(candidate_queue_name, node_label,
-                                                                            partition_availability_threshold)
-                        if queue_available is None:
-                            self.log.warning(warning_msg)
-                            return
-
-                    if queue_available:
-                        node_available, resource = self._check_resource(driver_gpu, driver_memory, driver_cpu, node_label)
-                        if node_available is None:
-                            self.log.warning(warning_msg)
-                            return
-
-                    yarn_available = queue_available and node_available
 
         except Exception as e:
             self.log.warning(warning_msg + " Reason: {}".format(e))
