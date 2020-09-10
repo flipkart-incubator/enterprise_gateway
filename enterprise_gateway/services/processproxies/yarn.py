@@ -547,3 +547,5 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
             return False, "Memory mb"
         elif no_gpu:
             return False, "GPU"
+
+        return False, None
