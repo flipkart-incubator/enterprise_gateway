@@ -9,6 +9,8 @@ import logging
 import errno
 import socket
 
+from tornado.web import HTTPError
+
 from jupyter_client import launch_kernel, localinterfaces
 from yarn_api_client.resource_manager import ResourceManager
 
@@ -140,10 +142,11 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
             if env_dict.get('KERNEL_LAUNCH_TIMEOUT'):
                 self.yarn_resource_check_wait_time = 0.20 * float(env_dict.get('KERNEL_LAUNCH_TIMEOUT'))
 
-            candidate_queue_name = (env_dict.get('KERNEL_QUEUE', None))
+            queue_name = (env_dict.get('KERNEL_QUEUE', None))
             node_label = env_dict.get('KERNEL_NODE_LABEL', None)
 
-            if candidate_queue_name is None or node_label is None:
+            if queue_name is None or node_label is None:
+                self.log.warning("Either queue name or node label is not present. {}".format(warning_msg))
                 return
 
             partition_availability_threshold = float(env_dict.get('YARN_PARTITION_THRESHOLD', 95.0))
@@ -157,57 +160,100 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
 
             self.start_time = RemoteProcessProxy.get_current_time()
 
+            queue_threshold_available = False
             queue_available = False
             node_available = False
             yarn_available = False
+            resource = None
 
             # disable queue partition availability check if partition availability threshold value is -1.
             if partition_availability_threshold == -1:
-                queue_available = True
+                queue_threshold_available = True
 
             self.log.info("Waiting for resource availability for maximum {} seconds."
                           .format(self.yarn_resource_check_wait_time))
 
             while not yarn_available:
-                if not queue_available:
-                    queue_available = self._check_queue_partition_usage(candidate_queue_name, node_label,
-                                                                        partition_availability_threshold)
-                    if queue_available is None:
-                        self.log.warning(warning_msg)
+
+                # getting queue from cluster scheduler API.
+                candidate_queue = self.resource_mgr.cluster_scheduler_queue(queue_name)
+
+                if candidate_queue is None:
+                    self.log.warning("Queue: {} not found in cluster. {}".format(queue_name, warning_msg))
+                    return
+
+                # getting partition from queueCapacitiesByPartition in cluster scheduler queue object.
+                capacity_partition = self.resource_mgr.cluster_queue_partition(candidate_queue, node_label)
+
+                if capacity_partition is None:
+                    self.log.warning("Capacity for Partition: {} not found in {} queue. {}"
+                                     .format(node_label, queue_name, warning_msg))
+                    return
+
+                # checking if the queue usage is above the given partition usage threshold (default 95%).
+                if not queue_threshold_available:
+                    self.log.info("Checking endpoint: {} if queue {} has used capacity <= {}% for the partition: {} "
+                                  .format(self.resource_mgr.get_active_endpoint(), queue_name,
+                                          partition_availability_threshold, node_label))
+                    queue_threshold_available = self.resource_mgr.cluster_scheduler_queue_availability(
+                        capacity_partition, partition_availability_threshold)
+
+                # checking if the queue has capacity remaining to launch the container with requested resources.
+                if queue_threshold_available:
+                    # getting partition from resourceUsagesByPartition in cluster scheduler queue object.
+                    resource_usage_partition = \
+                        self._get_queue_resource_usage_by_partition(candidate_queue=candidate_queue,
+                                                                    partition_name=node_label)
+                    if resource_usage_partition is None:
+                        self.log.warning("Resource Usage for Partition: {} not found in {} queue. {}"
+                                         .format(node_label, queue_name, warning_msg))
                         return
 
+                    queue_available, resource = \
+                        self._check_queue_resource(gpu=driver_gpu, memory_mb=driver_memory, cores=driver_cpu,
+                                                   resource_usage_partition=resource_usage_partition,
+                                                   capacity_partition=capacity_partition)
+
+                # checking if a single node of the given node label has the requested resources available.
                 if queue_available:
-                    node_available, resource = self._check_resource(driver_gpu, driver_memory, driver_cpu, node_label)
+                    node_available, resource = self._check_node_resource(gpu=driver_gpu, memory_mb=driver_memory,
+                                                                         cores=driver_cpu, node_label=node_label)
                     if node_available is None:
                         self.log.warning(warning_msg)
                         return
 
-                yarn_available = queue_available and node_available
+                yarn_available = queue_threshold_available and queue_available and node_available
 
                 if not yarn_available:
-                    self.handle_yarn_queue_timeout(queue_available, node_available)
+                    self.handle_yarn_queue_timeout(queue_threshold_available=queue_threshold_available,
+                                                   resource=resource)
+                else:
+                    self.log.info("Resource check completed.")
+
+        except (HTTPError, RuntimeError) as e:
+            raise e
 
         except Exception as e:
-            self.log.warning(warning_msg + " Reason: {}".format(e))
+            self.log.warning(warning_msg + " Reason: {}".format(str(e)))
 
         finally:
             # subtracting the total amount of time spent for polling for resource availability
             self.kernel_launch_timeout -= RemoteProcessProxy.get_time_diff(self.start_time,
                                                                            RemoteProcessProxy.get_current_time())
 
-    def handle_yarn_queue_timeout(self, queue_available, resource):
+    def handle_yarn_queue_timeout(self, queue_threshold_available, resource):
 
         time.sleep(poll_interval)
         time_interval = RemoteProcessProxy.get_time_diff(self.start_time, RemoteProcessProxy.get_current_time())
 
         if time_interval > self.yarn_resource_check_wait_time:
             error_http_code = 500
-            if not queue_available:
+            if not queue_threshold_available:
                 reason = "Yarn Compute Resources for kernel startup are unavailable after {} secs.".format(
                     self.yarn_resource_check_wait_time)
             else:
-                reason = "The following Yarn compute resource: 'Driver {}' is unavailable after {} secs".format(
-                    resource, self.yarn_resource_check_wait_time)
+                reason = "The following Yarn compute resources: '{}' are unavailable after {} secs".format(
+                    ", ".join(["Driver " + rs for rs in resource]), self.yarn_resource_check_wait_time)
             self.log_and_raise(http_status_code=error_http_code, reason=reason)
 
     def poll(self):
@@ -482,44 +528,47 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
 
         return response
 
-    def _check_queue_partition_usage(self, queue_name, partition_name, threshold):
+    def _check_queue_resource(self, gpu, memory_mb, cores, resource_usage_partition, capacity_partition):
 
-        candidate_queue = self.resource_mgr.cluster_scheduler_queue(queue_name)
+        resource_usage = self._get_resource_info(resource_usage_partition["used"])
+        capacity = self._get_resource_info(capacity_partition["effectiveMaxResource"])
 
-        if candidate_queue is None:
-            self.log.warning("Queue: {} not found in cluster.".format(queue_name))
-            return None
+        no_resources = []
 
-        candidate_partition = self.resource_mgr.cluster_queue_partition(candidate_queue, partition_name)
+        if (capacity['gpu'] - resource_usage['gpu']) < gpu:
+            no_resources.append("GPU")
+        if (capacity['memory-mb'] - resource_usage['memory-mb']) < memory_mb:
+            no_resources.append("Memory mb")
+        if (capacity['vcores'] - resource_usage['vcores']) < cores:
+            no_resources.append("CPU Cores")
 
-        if candidate_partition is None:
-            self.log.warning("Partition: {} not found in {} queue.".format(partition_name, queue_name))
-            return None
+        if len(no_resources) == 0:
+            return True, None
+        else:
+            return False, no_resources
 
-        self.log.debug("Checking endpoint: {} if queue {} has used capacity <= {}% for the partition: {} "
-                       .format(self.resource_mgr.get_active_endpoint(), queue_name, threshold, partition_name))
+    def _check_node_resource(self, gpu, memory_mb, cores, node_label):
+        try:
+            response = self.resource_mgr.cluster_nodes(states=["RUNNING"])
+            content = response.data
 
-        queue_available = self.resource_mgr.cluster_scheduler_queue_availability(candidate_partition, threshold)
-        return queue_available
+            available_resources = []
+            if node_label == "":
+                for node in content["nodes"]["node"]:
+                    if ("nodeLabels" not in node) or (node_label in node["nodeLabels"]):
+                        resource = self._get_resource_info(node["availableResource"])
+                        available_resources.append(resource)
 
-    def _check_resource(self, gpu, memory_mb, cores, node_label):
+            else:
+                for node in content["nodes"]["node"]:
+                    if ("nodeLabels" in node) and (node_label in node["nodeLabels"]):
+                        resource = self._get_resource_info(node["availableResource"])
+                        available_resources.append(resource)
 
-        response = self.resource_mgr.cluster_nodes(states=["RUNNING"])
-        content = response.data
-
-        available_resources = []
-        for node in content["nodes"]["node"]:
-            if node_label in node["nodeLabels"]:
-                resource = {}
-                for resource_info in node["availableResource"]["resourceInformations"]["resourceInformation"]:
-                    if resource_info['name'] == "yarn.io/gpu":
-                        resource['gpu'] = int(resource_info['value'])
-                    elif resource_info['name'] == "memory-mb":
-                        resource['memory-mb'] = int(resource_info['value'])
-                    elif resource_info['name'] == "vcores":
-                        resource['vcores'] = int(resource_info['value'])
-
-                available_resources.append(resource)
+        except Exception as e:
+            self.log.warning("Error while fetching nodes with the given node label: {}. Reason: {}"
+                             .format(node_label, str(e)))
+            raise e
 
         if len(available_resources) == 0:
             self.log.warning("No running node found with the given partition name/ node label: {}.".format(node_label))
@@ -542,10 +591,30 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
                 no_gpu = True
 
         if no_cores:
-            return False, "CPU Cores"
+            return False, ["CPU Cores"]
         elif no_memory_mb:
-            return False, "Memory mb"
+            return False, ["Memory mb"]
         elif no_gpu:
-            return False, "GPU"
+            return False, ["GPU"]
 
         return False, None
+
+    def _get_resource_info(self, resource_type):
+
+        resource = {}
+        for resource_info in resource_type["resourceInformations"]["resourceInformation"]:
+            if resource_info['name'] == "yarn.io/gpu":
+                resource['gpu'] = int(resource_info['value'])
+            elif resource_info['name'] == "memory-mb":
+                resource['memory-mb'] = int(resource_info['value'])
+            elif resource_info['name'] == "vcores":
+                resource['vcores'] = int(resource_info['value'])
+
+        return resource
+
+    def _get_queue_resource_usage_by_partition(self, candidate_queue, partition_name):
+
+        for partition in candidate_queue['resources']['resourceUsagesByPartition']:
+            if partition['partitionName'] == partition_name:
+                return partition
+        return None
