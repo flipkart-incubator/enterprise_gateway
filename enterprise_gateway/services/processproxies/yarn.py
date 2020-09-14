@@ -25,6 +25,8 @@ poll_interval = float(os.getenv('EG_POLL_INTERVAL', '0.5'))
 max_poll_attempts = int(os.getenv('EG_MAX_POLL_ATTEMPTS', '10'))
 yarn_shutdown_wait_time = float(os.getenv('EG_YARN_SHUTDOWN_WAIT_TIME', '15.0'))
 
+partition_availability_threshold = float(os.getenv('YARN_PARTITION_THRESHOLD', 95.0))
+
 
 class YarnClusterProcessProxy(RemoteProcessProxy):
     """Kernel lifecycle management for YARN clusters."""
@@ -84,9 +86,18 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
     def launch_process(self, kernel_cmd, **kwargs):
         """Launches the specified process within a YARN cluster environment."""
 
-        # checks to see if the queue resource is available
+        env_dict = kwargs.get('env')
+        if env_dict is None:
+            env_dict = dict(os.environ.copy())
+            kwargs.update({'env': env_dict})
+
+        # checks to see if the startup and compute resources are available
         # if not available, kernel startup is not attempted
         self.check_kernel_startup_and_driver_resource_availability(**kwargs)
+
+        self.log.info("Updating kernel launch timeout to '{}' secs".format(self.kernel_launch_timeout))
+        env_dict.update({'KERNEL_LAUNCH_TIMEOUT': str(self.kernel_launch_timeout)})
+        kwargs.update({'env': env_dict})
 
         super(YarnClusterProcessProxy, self).launch_process(kernel_cmd, **kwargs)
 
@@ -122,9 +133,17 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
         for kernel startup. This checks if the queue's absolute used capacity for that partition is below
         a threshold value (default 95%)
 
-        (ii) Second check assumes that the absolute max capacity that the given queue can use
-        of the given partition is 100%. Consequently, it checks all the nodes of the given partition for
-        the availability of three resources:
+        (ii) Second check uses yarn cluster scheduler API to get the 'total resource capacity' of the given queue
+        using 'effectiveMaxCapacity' field from the 'queueCapacitiesByPartition' object for the given partition.
+        Secondly, it gets the 'total resource usage' of the given queue using 'used' field from the
+        'resourceUsagesByPartition' object for the given partition.
+        Lastly, it checks if the requested resources exceed the "max available capacity" calculated using
+        "total resource capacity" and "total resource usage" for three resources:
+        KERNEL_DRIVER_MEMORY, KERNEL_DRIVER_CORES and KERNEL_DRIVER_GPU.
+
+        (iii) Third check is done only if second check succeeds. This check assumes that the effective max capacity
+        that the given queue can use of the given partition is 100%. Consequently, it checks all the nodes of the
+        given partition for the availability of three resources:
         KERNEL_DRIVER_MEMORY, KERNEL_DRIVER_CORES and KERNEL_DRIVER_GPU.
 
         All Checks are optional and are only performed if we have KERNEL_QUEUE and KERNEL_NODE_LABEL
@@ -137,10 +156,14 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
         """
 
         warning_msg = "Availability check will not be performed"
+
+        # Start a timeout for checking resource availability.
+        self.start_time = RemoteProcessProxy.get_current_time()
         try:
             env_dict = kwargs.get('env', {})
             if env_dict.get('KERNEL_LAUNCH_TIMEOUT'):
-                self.yarn_resource_check_wait_time = 0.20 * float(env_dict.get('KERNEL_LAUNCH_TIMEOUT'))
+                self.kernel_launch_timeout = float(env_dict.get('KERNEL_LAUNCH_TIMEOUT'))
+                self.yarn_resource_check_wait_time = 0.20 * self.kernel_launch_timeout
 
             queue_name = (env_dict.get('KERNEL_QUEUE', None))
             node_label = env_dict.get('KERNEL_NODE_LABEL', None)
@@ -149,16 +172,9 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
                 self.log.warning("Either queue name or node label is not present. {}".format(warning_msg))
                 return
 
-            partition_availability_threshold = float(env_dict.get('YARN_PARTITION_THRESHOLD', 95.0))
-
             driver_memory = int(env_dict.get('KERNEL_DRIVER_MEMORY', 0))
             driver_cpu = int(env_dict.get('KERNEL_DRIVER_CORES', 0))
             driver_gpu = int(env_dict.get('KERNEL_DRIVER_GPU', 0))
-
-            # The resources may or may not be available now. It may be possible that if we wait then the resources
-            # become available. Start a timeout process
-
-            self.start_time = RemoteProcessProxy.get_current_time()
 
             queue_threshold_available = False
             queue_available = False
@@ -166,12 +182,13 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
             yarn_available = False
             resource = None
 
-            # disable queue partition availability check if partition availability threshold value is -1.
-            if partition_availability_threshold == -1:
-                queue_threshold_available = True
-
             self.log.info("Waiting for resource availability for maximum {} seconds."
                           .format(self.yarn_resource_check_wait_time))
+
+            # disable queue partition availability check if partition availability threshold value is -1.
+            if partition_availability_threshold == -1:
+                self.log.info("Skipping yarn queue partition threshold availability check.")
+                queue_threshold_available = True
 
             while not yarn_available:
 
@@ -193,8 +210,7 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
                 # checking if the queue usage is above the given partition usage threshold (default 95%).
                 if not queue_threshold_available:
                     self.log.info("Checking endpoint: {} if queue {} has used capacity <= {}% for the partition: {} "
-                                  .format(self.resource_mgr.get_active_endpoint(), queue_name,
-                                          partition_availability_threshold, node_label))
+                                  .format(self.rm_addr, queue_name, partition_availability_threshold, node_label))
                     queue_threshold_available = self.resource_mgr.cluster_scheduler_queue_availability(
                         capacity_partition, partition_availability_threshold)
 
@@ -530,8 +546,8 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
 
     def _check_queue_resource(self, gpu, memory_mb, cores, resource_usage_partition, capacity_partition):
 
-        resource_usage = self._get_resource_info(resource_usage_partition["used"])
-        capacity = self._get_resource_info(capacity_partition["effectiveMaxResource"])
+        resource_usage = self._get_resource_dict(resource_usage_partition["used"])
+        capacity = self._get_resource_dict(capacity_partition["effectiveMaxResource"])
 
         no_resources = []
 
@@ -556,13 +572,13 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
             if node_label == "":
                 for node in content["nodes"]["node"]:
                     if ("nodeLabels" not in node) or (node_label in node["nodeLabels"]):
-                        resource = self._get_resource_info(node["availableResource"])
+                        resource = self._get_resource_dict(node["availableResource"])
                         available_resources.append(resource)
 
             else:
                 for node in content["nodes"]["node"]:
                     if ("nodeLabels" in node) and (node_label in node["nodeLabels"]):
-                        resource = self._get_resource_info(node["availableResource"])
+                        resource = self._get_resource_dict(node["availableResource"])
                         available_resources.append(resource)
 
         except Exception as e:
@@ -599,16 +615,16 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
 
         return False, None
 
-    def _get_resource_info(self, resource_type):
+    def _get_resource_dict(self, resource_info):
 
         resource = {}
-        for resource_info in resource_type["resourceInformations"]["resourceInformation"]:
-            if resource_info['name'] == "yarn.io/gpu":
-                resource['gpu'] = int(resource_info['value'])
-            elif resource_info['name'] == "memory-mb":
-                resource['memory-mb'] = int(resource_info['value'])
-            elif resource_info['name'] == "vcores":
-                resource['vcores'] = int(resource_info['value'])
+        for rs in resource_info["resourceInformations"]["resourceInformation"]:
+            if rs['name'] == "yarn.io/gpu":
+                resource['gpu'] = int(rs['value'])
+            elif rs['name'] == "memory-mb":
+                resource['memory-mb'] = int(rs['value'])
+            elif rs['name'] == "vcores":
+                resource['vcores'] = int(rs['value'])
 
         return resource
 
