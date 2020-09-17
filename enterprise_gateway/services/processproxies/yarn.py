@@ -9,6 +9,8 @@ import logging
 import errno
 import socket
 
+from tornado.web import HTTPError
+
 from jupyter_client import launch_kernel, localinterfaces
 from yarn_api_client.resource_manager import ResourceManager
 
@@ -23,6 +25,8 @@ poll_interval = float(os.getenv('EG_POLL_INTERVAL', '0.5'))
 max_poll_attempts = int(os.getenv('EG_MAX_POLL_ATTEMPTS', '10'))
 yarn_shutdown_wait_time = float(os.getenv('EG_YARN_SHUTDOWN_WAIT_TIME', '15.0'))
 
+partition_availability_threshold = float(os.getenv('YARN_PARTITION_THRESHOLD', 95.0))
+
 
 class YarnClusterProcessProxy(RemoteProcessProxy):
     """Kernel lifecycle management for YARN clusters."""
@@ -33,8 +37,6 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
         super(YarnClusterProcessProxy, self).__init__(kernel_manager, proxy_config)
         self.application_id = None
         self.last_known_state = None
-        self.candidate_queue = None
-        self.candidate_partition = None
         self.local_proc = None
         self.pid = None
         self.ip = None
@@ -84,9 +86,18 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
     def launch_process(self, kernel_cmd, **kwargs):
         """Launches the specified process within a YARN cluster environment."""
 
-        # checks to see if the queue resource is available
+        env_dict = kwargs.get('env')
+        if env_dict is None:
+            env_dict = dict(os.environ.copy())
+            kwargs.update({'env': env_dict})
+
+        # checks to see if the startup and compute resources are available
         # if not available, kernel startup is not attempted
-        self.confirm_yarn_queue_availability(**kwargs)
+        self.check_kernel_startup_and_driver_resource_availability(**kwargs)
+
+        self.log.info("Updating kernel launch timeout to '{}' secs".format(self.kernel_launch_timeout))
+        env_dict.update({'KERNEL_LAUNCH_TIMEOUT': str(self.kernel_launch_timeout)})
+        kwargs.update({'env': env_dict})
 
         super(YarnClusterProcessProxy, self).launch_process(kernel_cmd, **kwargs)
 
@@ -101,101 +112,164 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
 
         return self
 
-    def confirm_yarn_queue_availability(self, **kwargs):
+    def check_kernel_startup_and_driver_resource_availability(self, **kwargs):
         """
+        OLD METHOD NAME: confirm_yarn_queue_availability
+
         Submitting jobs to yarn queue and then checking till the jobs are in running state
         will lead to orphan jobs being created in some scenarios.
 
         We take kernel_launch_timeout time and divide this into two parts.
-        If the queue is unavailable we take max 20% of the time to poll the queue periodically
-        and if the queue becomes available the rest of timeout is met in 80% of the remaining
-        time.
+        Max 20% of the time is taken to poll periodically for kernel startup resource availability and
+        kernel driver resources availability.
+        If both these become available, the rest of the timeout is met in the remaining time which is
+        min 80% of the kernel_launch_timeout time.
 
         This algorithm is subject to change. Please read the below cases to understand
         when and how checks are applied.
 
-        Confirms if the yarn queue has capacity to handle the resource requests that
-        will be sent to it.
+        (i) First, current version of check takes into consideration node label partitioning on given queues.
+        Provided the queue name and node label this checks if the given partition has capacity available
+        for kernel startup. This checks if the queue's absolute used capacity for that partition is below
+        a threshold value (default 95%)
 
-        First check ensures the driver and executor memory request falls within
-        the container size of yarn configuration. This check requires executor and
-        driver memory to be available in the env.
+        (ii) Second check uses yarn cluster scheduler API to get the 'total resource capacity' of the given queue
+        using 'effectiveMaxCapacity' field from the 'queueCapacitiesByPartition' object for the given partition.
+        Secondly, it gets the 'total resource usage' of the given queue using 'used' field from the
+        'resourceUsagesByPartition' object for the given partition.
+        Lastly, it checks if the requested resources exceed the "max available capacity" calculated using
+        "total resource capacity" and "total resource usage" for three resources:
+        KERNEL_DRIVER_MEMORY, KERNEL_DRIVER_CORES and KERNEL_DRIVER_GPU.
 
-        Second,Current version of check, takes into consideration node label partitioning
-        on given queues. Provided the queue name and node label this checks if
-        the given partition has capacity available for kernel startup.
+        (iii) Third check is done only if second check succeeds. This check assumes that the effective max capacity
+        that the given queue can use of the given partition is 100%. Consequently, it checks all the nodes of the
+        given partition for the availability of three resources:
+        KERNEL_DRIVER_MEMORY, KERNEL_DRIVER_CORES and KERNEL_DRIVER_GPU.
 
-        All Checks are optional. If we have KERNEL_EXECUTOR_MEMORY and KERNEL_DRIVER_MEMORY
-        specified, first check is performed.
+        All Checks are optional and are only performed if we have KERNEL_QUEUE and KERNEL_NODE_LABEL
+        specified as env variables.
+        First check can be further disabled by passing YARN_PARTITION_THRESHOLD value as -1.
 
-        If we have KERNEL_QUEUE and KERNEL_NODE_LABEL specified, second check is performed.
-
-        Proper error messages are sent back for user experience
-        :param kwargs:
+        Proper error messages are sent back for good user experience.
+        :param kwargs: same as launch process kwargs.
         :return:
         """
-        env_dict = kwargs.get('env', {})
 
-        executor_memory = int(env_dict.get('KERNEL_EXECUTOR_MEMORY', 0))
-        driver_memory = int(env_dict.get('KERNEL_DRIVER_MEMORY', 0))
+        warning_msg = "Availability check will not be performed"
 
-        if executor_memory * driver_memory > 0:
-            container_memory = self.resource_mgr.cluster_node_container_memory()
-            if max(executor_memory, driver_memory) > container_memory:
-                self.log_and_raise(http_status_code=500,
-                                   reason="Container Memory not sufficient for a executor/driver allocation")
-
-        candidate_queue_name = (env_dict.get('KERNEL_QUEUE', None))
-        node_label = env_dict.get('KERNEL_NODE_LABEL', None)
-        partition_availability_threshold = float(env_dict.get('YARN_PARTITION_THRESHOLD', 95.0))
-
-        if candidate_queue_name is None or node_label is None:
-            return
-
-        # else the resources may or may not be available now. it may be possible that if we wait then the resources
-        # become available. start  a timeout process
-
+        # Start a timeout for checking resource availability.
         self.start_time = RemoteProcessProxy.get_current_time()
-        self.candidate_queue = self.resource_mgr.cluster_scheduler_queue(candidate_queue_name)
+        try:
+            env_dict = kwargs.get('env', {})
+            if env_dict.get('KERNEL_LAUNCH_TIMEOUT'):
+                self.kernel_launch_timeout = float(env_dict.get('KERNEL_LAUNCH_TIMEOUT'))
+                self.yarn_resource_check_wait_time = 0.20 * self.kernel_launch_timeout
 
-        if self.candidate_queue is None:
-            self.log.warning("Queue: {} not found in cluster."
-                             "Availability check will not be performed".format(candidate_queue_name))
-            return
+            queue_name = (env_dict.get('KERNEL_QUEUE', None))
+            node_label = env_dict.get('KERNEL_NODE_LABEL', None)
 
-        self.candidate_partition = self.resource_mgr.cluster_queue_partition(self.candidate_queue, node_label)
+            if queue_name is None or node_label is None:
+                self.log.warning("Either queue name or node label is not present. {}".format(warning_msg))
+                return
 
-        if self.candidate_partition is None:
-            self.log.debug("Partition: {} not found in {} queue."
-                           "Availability check will not be performed".format(node_label, candidate_queue_name))
-            return
+            driver_memory = int(env_dict.get('KERNEL_DRIVER_MEMORY', 0))
+            driver_cpu = int(env_dict.get('KERNEL_DRIVER_CORES', 0))
+            driver_gpu = int(env_dict.get('KERNEL_DRIVER_GPU', 0))
 
-        self.log.debug("Checking endpoint: {} if partition: {} "
-                       "has used capacity <= {}%".format(self.yarn_endpoint,
-                                                         self.candidate_partition, partition_availability_threshold))
+            queue_threshold_available = False
+            queue_available = False
+            node_available = False
+            yarn_available = False
+            resource = None
 
-        yarn_available = self.resource_mgr.cluster_scheduler_queue_availability(self.candidate_partition,
-                                                                                partition_availability_threshold)
-        if not yarn_available:
-            self.log.debug(
-                "Retrying for {} ms since resources are not available".format(self.yarn_resource_check_wait_time))
+            self.log.info("Waiting for resource availability for maximum {} seconds."
+                          .format(self.yarn_resource_check_wait_time))
+
+            # disable queue partition availability check if partition availability threshold value is -1.
+            if partition_availability_threshold == -1:
+                self.log.info("Skipping yarn queue partition threshold availability check.")
+                queue_threshold_available = True
+
             while not yarn_available:
-                self.handle_yarn_queue_timeout()
-                yarn_available = self.resource_mgr.cluster_scheduler_queue_availability(
-                    self.candidate_partition, partition_availability_threshold)
 
-        # subtracting the total amount of time spent for polling for queue availability
-        self.kernel_launch_timeout -= RemoteProcessProxy.get_time_diff(self.start_time,
-                                                                       RemoteProcessProxy.get_current_time())
+                # getting queue from cluster scheduler API.
+                candidate_queue = self.resource_mgr.cluster_scheduler_queue(queue_name)
 
-    def handle_yarn_queue_timeout(self):
+                if candidate_queue is None:
+                    self.log.warning("Queue: {} not found in cluster. {}".format(queue_name, warning_msg))
+                    return
+
+                # getting partition from queueCapacitiesByPartition in cluster scheduler queue object.
+                capacity_partition = self.resource_mgr.cluster_queue_partition(candidate_queue, node_label)
+
+                if capacity_partition is None:
+                    self.log.warning("Capacity for Partition: {} not found in {} queue. {}"
+                                     .format(node_label, queue_name, warning_msg))
+                    return
+
+                # checking if the queue usage is above the given partition usage threshold (default 95%).
+                if not queue_threshold_available:
+                    self.log.info("Checking endpoint: {} if queue {} has used capacity <= {}% for the partition: {} "
+                                  .format(self.rm_addr, queue_name, partition_availability_threshold, node_label))
+                    queue_threshold_available = self.resource_mgr.cluster_scheduler_queue_availability(
+                        capacity_partition, partition_availability_threshold)
+
+                # checking if the queue has capacity remaining to launch the container with requested resources.
+                if queue_threshold_available:
+                    # getting partition from resourceUsagesByPartition in cluster scheduler queue object.
+                    resource_usage_partition = \
+                        self._get_queue_resource_usage_by_partition(candidate_queue=candidate_queue,
+                                                                    partition_name=node_label)
+                    if resource_usage_partition is None:
+                        self.log.warning("Resource Usage for Partition: {} not found in {} queue. {}"
+                                         .format(node_label, queue_name, warning_msg))
+                        return
+
+                    queue_available, resource = \
+                        self._check_queue_resource(gpu=driver_gpu, memory_mb=driver_memory, cores=driver_cpu,
+                                                   resource_usage_partition=resource_usage_partition,
+                                                   capacity_partition=capacity_partition)
+
+                # checking if a single node of the given node label has the requested resources available.
+                if queue_available:
+                    node_available, resource = self._check_node_resource(gpu=driver_gpu, memory_mb=driver_memory,
+                                                                         cores=driver_cpu, node_label=node_label)
+                    if node_available is None:
+                        self.log.warning(warning_msg)
+                        return
+
+                yarn_available = queue_threshold_available and queue_available and node_available
+
+                if not yarn_available:
+                    self.handle_yarn_queue_timeout(queue_threshold_available=queue_threshold_available,
+                                                   resource=resource)
+                else:
+                    self.log.info("Resource check completed.")
+
+        except (HTTPError, RuntimeError) as e:
+            raise e
+
+        except Exception as e:
+            self.log.warning(warning_msg + " Reason: {}".format(str(e)))
+
+        finally:
+            # subtracting the total amount of time spent for polling for resource availability
+            self.kernel_launch_timeout -= RemoteProcessProxy.get_time_diff(self.start_time,
+                                                                           RemoteProcessProxy.get_current_time())
+
+    def handle_yarn_queue_timeout(self, queue_threshold_available, resource):
 
         time.sleep(poll_interval)
         time_interval = RemoteProcessProxy.get_time_diff(self.start_time, RemoteProcessProxy.get_current_time())
 
         if time_interval > self.yarn_resource_check_wait_time:
             error_http_code = 500
-            reason = "Yarn Compute Resource is unavailable after {} seconds".format(self.yarn_resource_check_wait_time)
+            if not queue_threshold_available:
+                reason = "Yarn Compute Resources for kernel startup are unavailable after {} secs.".format(
+                    self.yarn_resource_check_wait_time)
+            else:
+                reason = "The following Yarn compute resources: '{}' are unavailable after {} secs".format(
+                    ", ".join(["Driver " + rs for rs in resource]), self.yarn_resource_check_wait_time)
             self.log_and_raise(http_status_code=error_http_code, reason=reason)
 
     def poll(self):
@@ -469,3 +543,94 @@ class YarnClusterProcessProxy(RemoteProcessProxy):
                              format(app_id, e))
 
         return response
+
+    def _check_queue_resource(self, gpu, memory_mb, cores, resource_usage_partition, capacity_partition):
+
+        resource_usage = self._get_resource_dict(resource_usage_partition["used"])
+        capacity = self._get_resource_dict(capacity_partition["effectiveMaxResource"])
+
+        no_resources = []
+
+        if (capacity['gpu'] - resource_usage['gpu']) < gpu:
+            no_resources.append("GPU")
+        if (capacity['memory-mb'] - resource_usage['memory-mb']) < memory_mb:
+            no_resources.append("Memory mb")
+        if (capacity['vcores'] - resource_usage['vcores']) < cores:
+            no_resources.append("CPU Cores")
+
+        if len(no_resources) == 0:
+            return True, None
+        else:
+            return False, no_resources
+
+    def _check_node_resource(self, gpu, memory_mb, cores, node_label):
+        try:
+            response = self.resource_mgr.cluster_nodes(states=["RUNNING"])
+            content = response.data
+
+            available_resources = []
+            if node_label == "":
+                for node in content["nodes"]["node"]:
+                    if ("nodeLabels" not in node) or (node_label in node["nodeLabels"]):
+                        resource = self._get_resource_dict(node["availableResource"])
+                        available_resources.append(resource)
+
+            else:
+                for node in content["nodes"]["node"]:
+                    if ("nodeLabels" in node) and (node_label in node["nodeLabels"]):
+                        resource = self._get_resource_dict(node["availableResource"])
+                        available_resources.append(resource)
+
+        except Exception as e:
+            self.log.warning("Error while fetching nodes with the given node label: {}. Reason: {}"
+                             .format(node_label, str(e)))
+            raise e
+
+        if len(available_resources) == 0:
+            self.log.warning("No running node found with the given partition name/ node label: {}.".format(node_label))
+            return None, None
+
+        no_gpu = False
+        no_memory_mb = False
+        no_cores = False
+
+        for resource in available_resources:
+            if resource['gpu'] >= gpu:
+                if resource['memory-mb'] >= memory_mb:
+                    if resource['vcores'] >= cores:
+                        return True, None
+                    else:
+                        no_cores = True
+                else:
+                    no_memory_mb = True
+            else:
+                no_gpu = True
+
+        if no_cores:
+            return False, ["CPU Cores"]
+        elif no_memory_mb:
+            return False, ["Memory mb"]
+        elif no_gpu:
+            return False, ["GPU"]
+
+        return False, None
+
+    def _get_resource_dict(self, resource_info):
+
+        resource = {}
+        for rs in resource_info["resourceInformations"]["resourceInformation"]:
+            if rs['name'] == "yarn.io/gpu":
+                resource['gpu'] = int(rs['value'])
+            elif rs['name'] == "memory-mb":
+                resource['memory-mb'] = int(rs['value'])
+            elif rs['name'] == "vcores":
+                resource['vcores'] = int(rs['value'])
+
+        return resource
+
+    def _get_queue_resource_usage_by_partition(self, candidate_queue, partition_name):
+
+        for partition in candidate_queue['resources']['resourceUsagesByPartition']:
+            if partition['partitionName'] == partition_name:
+                return partition
+        return None
