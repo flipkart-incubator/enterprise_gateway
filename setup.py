@@ -54,7 +54,7 @@ Apache Spark, Kubernetes and others..
         'jupyter_client==5.3.5.dev1',
         'jupyter_core>=4.4.0',
         'kubernetes>=4.0.0',
-        'notebook==5.7.9.dev4',
+        'notebook>=5.7.9.dev5,<5.8.0',
         'paramiko>=2.1.2',
         'pexpect>=4.2.0',
         'pycrypto>=2.6.1',
