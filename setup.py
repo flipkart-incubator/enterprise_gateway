@@ -63,6 +63,7 @@ Apache Spark, Kubernetes and others..
         'tornado>=4.2.0',
         'traitlets>=4.3.3',
         'yarn-api-client>=1.0',
+        'ipykernel>=5.1.4.dev2,<5.1.5',
     ],
     python_requires='>=3.5',
     classifiers=[
